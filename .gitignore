@@ -30,3 +30,14 @@ EK-TM4C123GXL/Proyectos/uart0/.clangd
 EK-TM4C123GXL/Proyectos/uart0/.ccsproject
 EK-TM4C123GXL/Proyectos/uart0/.settings/org.eclipse.core.resources.prefs
 
+EK-TM4C123GXL/Proyectos/pwm/Debug/
+EK-TM4C123GXL/Proyectos/pwm/targetConfigs/
+EK-TM4C123GXL/Proyectos/pwm/.ccsproject
+EK-TM4C123GXL/Proyectos/pwm/.clangd
+EK-TM4C123GXL/Proyectos/pwm/.cproject
+EK-TM4C123GXL/Proyectos/pwm/.project
+EK-TM4C123GXL/Proyectos/pwm/.settings/org.eclipse.cdt.codan.core.prefs
+EK-TM4C123GXL/Proyectos/pwm/.settings/org.eclipse.core.resources.prefs
+EK-TM4C123GXL/Proyectos/pwm/macros.ini_initial
+EK-TM4C123GXL/Proyectos/pwm/pwm_ccs.cmd
+EK-TM4C123GXL/Proyectos/pwm/target_config.ccxml
