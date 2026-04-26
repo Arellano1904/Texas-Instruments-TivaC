@@ -1,8 +1,38 @@
 //*****************************************************************************
-// Test project. 
-// *****************************************************************************
+// //***** Code test to handle an ILI9341_spi_2.4_display *****//
+//*****************************************************************************
 
-// Colores básicos en formato RGB565
+//*****************************************************************************
+// //***** LIBRARIES *****//
+//*****************************************************************************
+// Common used libraries.
+#include <stdint.h>
+#include <stdbool.h>
+// The inc folder contains the device header files for each TM4C device as well as the hardware header .
+#include "inc/hw_memmap.h"
+#include "inc/hw_types.h"
+#include "inc/hw_gpio.h"
+#include "inc/hw_ints.h"
+#include "inc/hw_ssi.h"
+#include "inc/hw_pwm.h"
+#include "inc/hw_pwm.h"
+// The driverlib folder contains the TivaWare Driver Library (DriverLib) source code that allows users to leverage TI validated functions.
+#include "driverlib/rom_map.h"
+#include "driverlib/sysctl.h"
+#include "driverlib/pin_map.h"
+#include "driverlib/gpio.h"
+#include "driverlib/interrupt.h"
+#include "driverlib/ssi.h"
+#include "driverlib/fpu.h"
+#include "driverlib/udma.h"
+#include "driverlib/timer.h"
+#include "driverlib/adc.h"
+#include "driverlib/pwm.h"
+
+//*****************************************************************************
+// //***** Definitions *****//
+//*****************************************************************************
+//***** Colores b�sicos en formato RGB565 *****//
 #define BLACK       0x0000
 #define NAVY        0x000F
 #define DARKGREEN   0x03E0
@@ -25,427 +55,696 @@
 #define ILI9341_WIDTH   240
 #define ILI9341_HEIGHT  320
 
+//*****************************************************************************
+// //***** The error routine that is called if the driver library encounters an error *****//
+//*****************************************************************************
+#ifdef DEBUG
+void
+__error__(char *pcFilename, uint32_t ui32Line)
+{
+}
+#endif
 
-/* LIBRARIES */
-/* Common use libraries */
-#include <stdint.h>
-#include <stdbool.h>
-// The inc folder contains the device header files for each TM4C device as well as the hardware header files //
-#include "inc/hw_memmap.h"
-#include "inc/hw_types.h"
-#include "inc/hw_gpio.h"
-#include "inc/hw_ints.h"
-// The driverlib folder contains the TivaWare Driver Library (DriverLib) source code that allows users to leverage TI validated functions //
-#include "driverlib/sysctl.h"
-#include "driverlib/pin_map.h"
-#include "driverlib/gpio.h"
-#include "driverlib/interrupt.h"
-#include "driverlib/ssi.h"
-#include "driverlib/timer.h"
+//*****************************************************************************
+// //***** Function declaration *****//
+//*****************************************************************************
+// ON BOARD BUTTONS //
+void buttons_config(void);
+void buttons_ints_handler(void);
+// ON BOARD LEDS //
+void leds_config(void);
+// SPI1 FOR DISPLAY //
+void spi1_config(void);
+void spi1_data_len(uint32_t len);
+// uDMA //
+void uDMA_spi1_config(void);
+void uDMA_spi1_send_buffer(uint16_t* dataBuffer, uint32_t bufferLen);
+// TIMERS //
+void timer0_config(void);
+// ADC //
+void adc0_config(void);
+void adc0_seq3_handler(void);
+// PWM //
+void pwm_config(void);
+void pwm_set_from_adc(void);
+void pwm_init(void);
+// DIPLAY //
+void ili9341_reset(void);
+void ili9341_send_command(uint8_t cmd);
+void ili9341_send_data(uint8_t data);
+void ili9341_init(void);
+void ili9341_set_window(uint16_t x0, uint16_t y0,uint16_t x1, uint16_t y1);
+void ili9341_fill_screen(uint16_t color);
+void ili9341_draw_char(uint16_t x, uint16_t y,char c,uint16_t fg, uint16_t bg);
+void ili9341_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fg,uint16_t bg);
+void ili9341_print_int(uint16_t x, uint16_t y,int32_t num,uint16_t color, uint16_t bg);
+void ili9341_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint16_t color, uint16_t bg);
 
-// Tabla completa ASCII 5×7 (Adafruit font) //
-const uint8_t Font5x7[] = {
-  0x00,0x00,0x00,0x00,0x00, // 32 space
-  0x00,0x00,0x5F,0x00,0x00, // 33 !
-  0x00,0x07,0x00,0x07,0x00, // 34 "
-  0x14,0x7F,0x14,0x7F,0x14, // 35 #
-  0x24,0x2A,0x7F,0x2A,0x12, // 36 $
-  0x23,0x13,0x08,0x64,0x62, // 37 %
-  0x36,0x49,0x55,0x22,0x50, // 38 &
-  0x00,0x05,0x03,0x00,0x00, // 39 '
-  0x00,0x1C,0x22,0x41,0x00, // 40 (
-  0x00,0x41,0x22,0x1C,0x00, // 41 )
-  0x14,0x08,0x3E,0x08,0x14, // 42 *
-  0x08,0x08,0x3E,0x08,0x08, // 43 +
-  0x00,0x50,0x30,0x00,0x00, // 44 ,
-  0x08,0x08,0x08,0x08,0x08, // 45 -
-  0x00,0x60,0x60,0x00,0x00, // 46 .
-  0x20,0x10,0x08,0x04,0x02, // 47 /
-  0x3E,0x51,0x49,0x45,0x3E, // 48 0
-  0x00,0x42,0x7F,0x40,0x00, // 49 1
-  0x42,0x61,0x51,0x49,0x46, // 50 2
-  0x21,0x41,0x45,0x4B,0x31, // 51 3
-  0x18,0x14,0x12,0x7F,0x10, // 52 4
-  0x27,0x45,0x45,0x45,0x39, // 53 5
-  0x3C,0x4A,0x49,0x49,0x30, // 54 6
-  0x01,0x71,0x09,0x05,0x03, // 55 7
-  0x36,0x49,0x49,0x49,0x36, // 56 8
-  0x06,0x49,0x49,0x29,0x1E, // 57 9
-  0x00,0x36,0x36,0x00,0x00, // 58 :
-  0x00,0x56,0x36,0x00,0x00, // 59 ;
-  0x08,0x14,0x22,0x41,0x00, // 60 <
-  0x14,0x14,0x14,0x14,0x14, // 61 =
-  0x00,0x41,0x22,0x14,0x08, // 62 >
-  0x02,0x01,0x51,0x09,0x06, // 63 ?
-  0x32,0x49,0x79,0x41,0x3E, // 64 @
-  0x7E,0x11,0x11,0x11,0x7E, // 65 A
-  0x7F,0x49,0x49,0x49,0x36, // 66 B
-  0x3E,0x41,0x41,0x41,0x22, // 67 C
-  0x7F,0x41,0x41,0x22,0x1C, // 68 D
-  0x7F,0x49,0x49,0x49,0x41, // 69 E
-  0x7F,0x09,0x09,0x09,0x01, // 70 F
-  0x3E,0x41,0x49,0x49,0x7A, // 71 G
-  0x7F,0x08,0x08,0x08,0x7F, // 72 H
-  0x00,0x41,0x7F,0x41,0x00, // 73 I
-  0x20,0x40,0x41,0x3F,0x01, // 74 J
-  0x7F,0x08,0x14,0x22,0x41, // 75 K
-  0x7F,0x40,0x40,0x40,0x40, // 76 L
-  0x7F,0x02,0x04,0x02,0x7F, // 77 M
-  0x7F,0x04,0x08,0x10,0x7F, // 78 N
-  0x3E,0x41,0x41,0x41,0x3E, // 79 O
-  0x7F,0x09,0x09,0x09,0x06, // 80 P
-  0x3E,0x41,0x51,0x21,0x5E, // 81 Q
-  0x7F,0x09,0x19,0x29,0x46, // 82 R
-  0x46,0x49,0x49,0x49,0x31, // 83 S
-  0x01,0x01,0x7F,0x01,0x01, // 84 T
-  0x3F,0x40,0x40,0x40,0x3F, // 85 U
-  0x1F,0x20,0x40,0x20,0x1F, // 86 V
-  0x7F,0x20,0x18,0x20,0x7F, // 87 W
-  0x63,0x14,0x08,0x14,0x63, // 88 X
-  0x07,0x08,0x70,0x08,0x07, // 89 Y
-  0x61,0x51,0x49,0x45,0x43, // 90 Z
-  0x00,0x7F,0x41,0x41,0x00, // 91 [
-  0x02,0x04,0x08,0x10,0x20, // 92 backslash
-  0x00,0x41,0x41,0x7F,0x00, // 93 ]
-  0x04,0x02,0x01,0x02,0x04, // 94 ^
-  0x80,0x80,0x80,0x80,0x80, // 95 _
-  0x00,0x03,0x07,0x00,0x00, // 96 `
-  0x20,0x54,0x54,0x54,0x78, // 97 a
-  0x7F,0x48,0x44,0x44,0x38, // 98 b
-  0x38,0x44,0x44,0x44,0x20, // 99 c
-  0x38,0x44,0x44,0x48,0x7F, // 100 d
-  0x38,0x54,0x54,0x54,0x18, // 101 e
-  0x08,0x7E,0x09,0x01,0x02, // 102 f
-  0x0C,0x52,0x52,0x52,0x3E, // 103 g
-  0x7F,0x08,0x04,0x04,0x78, // 104 h
-  0x00,0x44,0x7D,0x40,0x00, // 105 i
-  0x20,0x40,0x44,0x3D,0x00, // 106 j
-  0x7F,0x10,0x28,0x44,0x00, // 107 k
-  0x00,0x41,0x7F,0x40,0x00, // 108 l
-  0x7C,0x04,0x18,0x04,0x78, // 109 m
-  0x7C,0x08,0x04,0x04,0x78, // 110 n
-  0x38,0x44,0x44,0x44,0x38, // 111 o
-  0x7C,0x14,0x14,0x14,0x08, // 112 p
-  0x08,0x14,0x14,0x18,0x7C, // 113 q
-  0x7C,0x08,0x04,0x04,0x08, // 114 r
-  0x48,0x54,0x54,0x54,0x20, // 115 s
-  0x04,0x3F,0x44,0x40,0x20, // 116 t
-  0x3C,0x40,0x40,0x20,0x7C, // 117 u
-  0x1C,0x20,0x40,0x20,0x1C, // 118 v
-  0x3C,0x40,0x30,0x40,0x3C, // 119 w
-  0x44,0x28,0x10,0x28,0x44, // 120 x
-  0x0C,0x50,0x50,0x50,0x3C, // 121 y
-  0x44,0x64,0x54,0x4C,0x44, // 122 z
-  0x00,0x08,0x36,0x41,0x00, // 123 {
-  0x00,0x00,0x7F,0x00,0x00, // 124 |
-  0x00,0x41,0x36,0x08,0x00, // 125 }
-  0x10,0x08,0x08,0x10,0x08  // 126 ~
-};
-
-// Function declatarions //
-// Timer functions // 
-void Timer0A_Handler(void); 
-void timer0Config(void);
-void delay_ms(uint32_t ms);
-// Buttons functions //
-void PortJ_Handler(void);
-void buttonsConfig(void);
-// Leds functions // 
-void ledsConfig(void);
-// SPI functions //
-void spi0Config(uint32_t clkFreq);
-// Display functions // 
-void initDisplay(uint32_t clkFreq);
-void resetDisplay(uint32_t clkFreq);
-void sendDisplayCommand(uint8_t cmd);
-void sendDisplayData(uint8_t data);
-void setDisplayWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
-void drawSinglePixel(uint16_t x, uint16_t y, uint16_t color);
-void drawChar(uint16_t x, uint16_t y, char c,uint16_t color, uint16_t bg);
-void drawString(uint16_t x, uint16_t y,const char *str,uint16_t color, uint16_t bg);
-void fillScreen(uint16_t color);
+// Funciones de apoyo
 void intToStr(int32_t value, char *buf);
-void drawInt(uint16_t x, uint16_t y,int32_t value,uint16_t color, uint16_t bg);
-void drawFloat(uint16_t x, uint16_t y,float value, uint8_t decimals, uint16_t color, uint16_t bg);
+void floatToStr(float value, char *buf, uint8_t decimals);
+float get_volts(uint32_t adc_value);
 
+//*****************************************************************************
+// Global variables.
+//*****************************************************************************
+volatile uint32_t sysClock = 0x00000000; // System clock freq.
+volatile uint8_t sw1State, sw2State = 0x00;
+// For uDMA use 
+#pragma DATA_ALIGN(uDMAControlTable, 1024);
+uint8_t uDMAControlTable[1024];
+#define LINES_PER_BUFFER 4
+uint16_t colorBuffer[ILI9341_WIDTH * LINES_PER_BUFFER];
+// ADC
+uint32_t adc_raw = 0x0000;
+volatile float volts = 0.0f; 
+volatile uint8_t adc_ready = 0x01;
+// PWM
+#define PWM_FREQUENCY 10000  // 10 kHz
+volatile uint32_t pwmPeriod;
+volatile uint32_t duty = 0.5f;
+// Fonts for display 
+const unsigned char font8x16[][16] = { 
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  },       //0x20, ' '
+        { 0x00, 0x00, 0x18, 0x3C, 0x3C, 0x3C, 0x18, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,  },       //0x21, '!'
+        { 0x00, 0x66, 0x66, 0x66, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  },       //0x22, '"'
+        { 0x00, 0x00, 0x00, 0x6C, 0x6C, 0xFE, 0x6C, 0x6C, 0x6C, 0xFE, 0x6C, 0x6C, 0x00, 0x00, 0x00, 0x00,  },       //0x23, '#'
+        { 0x18, 0x18, 0x7C, 0xC6, 0xC2, 0xC0, 0x7C, 0x06, 0x06, 0x86, 0xC6, 0x7C, 0x18, 0x18, 0x00, 0x00,  },       //0x24, '$'
+        { 0x00, 0x00, 0x00, 0x00, 0xC2, 0xC6, 0x0C, 0x18, 0x30, 0x60, 0xC6, 0x86, 0x00, 0x00, 0x00, 0x00,  },       //0x25, '%'
+        { 0x00, 0x00, 0x38, 0x6C, 0x6C, 0x38, 0x76, 0xDC, 0xCC, 0xCC, 0xCC, 0x76, 0x00, 0x00, 0x00, 0x00,  },       //0x26, '&'
+        { 0x00, 0x30, 0x30, 0x30, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  },       //0x27, '''
+        { 0x00, 0x00, 0x0C, 0x18, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x18, 0x0C, 0x00, 0x00, 0x00, 0x00,  },       //0x28, '('
+        { 0x00, 0x00, 0x30, 0x18, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x18, 0x30, 0x00, 0x00, 0x00, 0x00,  },       //0x29, ')'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x3C, 0xFF, 0x3C, 0x66, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  },       //0x2A, '*'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x7E, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  },       //0x2B, '+'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x18, 0x30, 0x00, 0x00, 0x00,  },       //0x2C, '
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  },       //0x2D, '-'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,  },       //0x2E, '.'
+        { 0x00, 0x00, 0x00, 0x00, 0x02, 0x06, 0x0C, 0x18, 0x30, 0x60, 0xC0, 0x80, 0x00, 0x00, 0x00, 0x00,  },       //0x2F, '/'
+        { 0x00, 0x00, 0x38, 0x6C, 0xC6, 0xC6, 0xD6, 0xD6, 0xC6, 0xC6, 0x6C, 0x38, 0x00, 0x00, 0x00, 0x00,  },       //0x30, '0'
+        { 0x00, 0x00, 0x18, 0x38, 0x78, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x7E, 0x00, 0x00, 0x00, 0x00,  },       //0x31, '1'
+        { 0x00, 0x00, 0x7C, 0xC6, 0x06, 0x0C, 0x18, 0x30, 0x60, 0xC0, 0xC6, 0xFE, 0x00, 0x00, 0x00, 0x00,  },       //0x32, '2'
+        { 0x00, 0x00, 0x7C, 0xC6, 0x06, 0x06, 0x3C, 0x06, 0x06, 0x06, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,  },       //0x33, '3'
+        { 0x00, 0x00, 0x0C, 0x1C, 0x3C, 0x6C, 0xCC, 0xFE, 0x0C, 0x0C, 0x0C, 0x1E, 0x00, 0x00, 0x00, 0x00,  },       //0x34, '4'
+        { 0x00, 0x00, 0xFE, 0xC0, 0xC0, 0xC0, 0xFC, 0x06, 0x06, 0x06, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,  },       //0x35, '5'
+        { 0x00, 0x00, 0x38, 0x60, 0xC0, 0xC0, 0xFC, 0xC6, 0xC6, 0xC6, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,  },       //0x36, '6'
+        { 0x00, 0x00, 0xFE, 0xC6, 0x06, 0x06, 0x0C, 0x18, 0x30, 0x30, 0x30, 0x30, 0x00, 0x00, 0x00, 0x00,  },       //0x37, '7'
+        { 0x00, 0x00, 0x7C, 0xC6, 0xC6, 0xC6, 0x7C, 0xC6, 0xC6, 0xC6, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,  },       //0x38, '8'
+        { 0x00, 0x00, 0x7C, 0xC6, 0xC6, 0xC6, 0x7E, 0x06, 0x06, 0x06, 0x0C, 0x78, 0x00, 0x00, 0x00, 0x00,  },       //0x39, '9'
+        { 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00,  },       //0x3A, ':'
+        { 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x18, 0x18, 0x30, 0x00, 0x00, 0x00, 0x00,  },       //0x3B, ';'
+        { 0x00, 0x00, 0x00, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x30, 0x18, 0x0C, 0x06, 0x00, 0x00, 0x00, 0x00,  },       //0x3C, '<'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  },       //0x3D, '='
+        { 0x00, 0x00, 0x00, 0x60, 0x30, 0x18, 0x0C, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x00, 0x00, 0x00, 0x00,  },       //0x3E, '>'
+        { 0x00, 0x00, 0x7C, 0xC6, 0xC6, 0x0C, 0x18, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,  },       //0x3F, '?'
+        { 0x00, 0x00, 0x00, 0x7C, 0xC6, 0xC6, 0xDE, 0xDE, 0xDE, 0xDC, 0xC0, 0x7C, 0x00, 0x00, 0x00, 0x00,  },       //0x40, '@'
+        { 0x00, 0x00, 0x10, 0x38, 0x6C, 0xC6, 0xC6, 0xFE, 0xC6, 0xC6, 0xC6, 0xC6, 0x00, 0x00, 0x00, 0x00,  },       //0x41, 'A'
+        { 0x00, 0x00, 0xFC, 0x66, 0x66, 0x66, 0x7C, 0x66, 0x66, 0x66, 0x66, 0xFC, 0x00, 0x00, 0x00, 0x00,  },       //0x42, 'B'
+        { 0x00, 0x00, 0x3C, 0x66, 0xC2, 0xC0, 0xC0, 0xC0, 0xC0, 0xC2, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00,  },       //0x43, 'C'
+        { 0x00, 0x00, 0xF8, 0x6C, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x6C, 0xF8, 0x00, 0x00, 0x00, 0x00,  },       //0x44, 'D'
+        { 0x00, 0x00, 0xFE, 0x66, 0x62, 0x68, 0x78, 0x68, 0x60, 0x62, 0x66, 0xFE, 0x00, 0x00, 0x00, 0x00,  },       //0x45, 'E'
+        { 0x00, 0x00, 0xFE, 0x66, 0x62, 0x68, 0x78, 0x68, 0x60, 0x60, 0x60, 0xF0, 0x00, 0x00, 0x00, 0x00,  },       //0x46, 'F'
+        { 0x00, 0x00, 0x3C, 0x66, 0xC2, 0xC0, 0xC0, 0xDE, 0xC6, 0xC6, 0x66, 0x3A, 0x00, 0x00, 0x00, 0x00,  },       //0x47, 'G'
+        { 0x00, 0x00, 0xC6, 0xC6, 0xC6, 0xC6, 0xFE, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0x00, 0x00, 0x00, 0x00,  },       //0x48, 'H'
+        { 0x00, 0x00, 0x3C, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x3C, 0x00, 0x00, 0x00, 0x00,  },       //0x49, 'I'
+        { 0x00, 0x00, 0x1E, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0xCC, 0xCC, 0xCC, 0x78, 0x00, 0x00, 0x00, 0x00,  },       //0x4A, 'J'
+        { 0x00, 0x00, 0xE6, 0x66, 0x66, 0x6C, 0x78, 0x78, 0x6C, 0x66, 0x66, 0xE6, 0x00, 0x00, 0x00, 0x00,  },       //0x4B, 'K'
+        { 0x00, 0x00, 0xF0, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x62, 0x66, 0xFE, 0x00, 0x00, 0x00, 0x00,  },       //0x4C, 'L'
+        { 0x00, 0x00, 0xC6, 0xEE, 0xFE, 0xFE, 0xD6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0x00, 0x00, 0x00, 0x00,  },       //0x4D, 'M'
+        { 0x00, 0x00, 0xC6, 0xE6, 0xF6, 0xFE, 0xDE, 0xCE, 0xC6, 0xC6, 0xC6, 0xC6, 0x00, 0x00, 0x00, 0x00,  },       //0x4E, 'N'
+        { 0x00, 0x00, 0x7C, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,  },       //0x4F, 'O'
+        { 0x00, 0x00, 0xFC, 0x66, 0x66, 0x66, 0x7C, 0x60, 0x60, 0x60, 0x60, 0xF0, 0x00, 0x00, 0x00, 0x00,  },       //0x50, 'P'
+        { 0x00, 0x00, 0x7C, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xD6, 0xDE, 0x7C, 0x0C, 0x0E, 0x00, 0x00,  },       //0x51, 'Q'
+        { 0x00, 0x00, 0xFC, 0x66, 0x66, 0x66, 0x7C, 0x6C, 0x66, 0x66, 0x66, 0xE6, 0x00, 0x00, 0x00, 0x00,  },       //0x52, 'R'
+        { 0x00, 0x00, 0x7C, 0xC6, 0xC6, 0x60, 0x38, 0x0C, 0x06, 0xC6, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,  },       //0x53, 'S'
+        { 0x00, 0x00, 0x7E, 0x7E, 0x5A, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x3C, 0x00, 0x00, 0x00, 0x00,  },       //0x54, 'T'
+        { 0x00, 0x00, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,  },       //0x55, 'U'
+        { 0x00, 0x00, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0x6C, 0x38, 0x10, 0x00, 0x00, 0x00, 0x00,  },       //0x56, 'V'
+        { 0x00, 0x00, 0xC6, 0xC6, 0xC6, 0xC6, 0xD6, 0xD6, 0xD6, 0xFE, 0xEE, 0x6C, 0x00, 0x00, 0x00, 0x00,  },       //0x57, 'W'
+        { 0x00, 0x00, 0xC6, 0xC6, 0x6C, 0x7C, 0x38, 0x38, 0x7C, 0x6C, 0xC6, 0xC6, 0x00, 0x00, 0x00, 0x00,  },       //0x58, 'X'
+        { 0x00, 0x00, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x18, 0x18, 0x18, 0x18, 0x3C, 0x00, 0x00, 0x00, 0x00,  },       //0x59, 'Y'
+        { 0x00, 0x00, 0xFE, 0xC6, 0x86, 0x0C, 0x18, 0x30, 0x60, 0xC2, 0xC6, 0xFE, 0x00, 0x00, 0x00, 0x00,  },       //0x5A, 'Z'
+        { 0x00, 0x00, 0x3C, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x3C, 0x00, 0x00, 0x00, 0x00,  },       //0x5B, '['
+        { 0x00, 0x00, 0x00, 0x80, 0xC0, 0xE0, 0x70, 0x38, 0x1C, 0x0E, 0x06, 0x02, 0x00, 0x00, 0x00, 0x00,  },       //0x5C, '\'
+        { 0x00, 0x00, 0x3C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x3C, 0x00, 0x00, 0x00, 0x00,  },       //0x5D, ']'
+        { 0x10, 0x38, 0x6C, 0xC6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  },       //0x5E, '^'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00,  },       //0x5F, '_'
+        { 0x30, 0x30, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  },       //0x60, '`'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x78, 0x0C, 0x7C, 0xCC, 0xCC, 0xCC, 0x76, 0x00, 0x00, 0x00, 0x00,  },       //0x61, 'a'
+        { 0x00, 0x00, 0xE0, 0x60, 0x60, 0x78, 0x6C, 0x66, 0x66, 0x66, 0x66, 0x7C, 0x00, 0x00, 0x00, 0x00,  },       //0x62, 'b'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x7C, 0xC6, 0xC0, 0xC0, 0xC0, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,  },       //0x63, 'c'
+        { 0x00, 0x00, 0x1C, 0x0C, 0x0C, 0x3C, 0x6C, 0xCC, 0xCC, 0xCC, 0xCC, 0x76, 0x00, 0x00, 0x00, 0x00,  },       //0x64, 'd'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x7C, 0xC6, 0xFE, 0xC0, 0xC0, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,  },       //0x65, 'e'
+        { 0x00, 0x00, 0x38, 0x6C, 0x64, 0x60, 0xF0, 0x60, 0x60, 0x60, 0x60, 0xF0, 0x00, 0x00, 0x00, 0x00,  },       //0x66, 'f'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x76, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0x7C, 0x0C, 0xCC, 0x78, 0x00,  },       //0x67, 'g'
+        { 0x00, 0x00, 0xE0, 0x60, 0x60, 0x6C, 0x76, 0x66, 0x66, 0x66, 0x66, 0xE6, 0x00, 0x00, 0x00, 0x00,  },       //0x68, 'h'
+        { 0x00, 0x00, 0x18, 0x18, 0x00, 0x38, 0x18, 0x18, 0x18, 0x18, 0x18, 0x3C, 0x00, 0x00, 0x00, 0x00,  },       //0x69, 'i'
+        { 0x00, 0x00, 0x06, 0x06, 0x00, 0x0E, 0x06, 0x06, 0x06, 0x06, 0x06, 0x06, 0x66, 0x66, 0x3C, 0x00,  },       //0x6A, 'j'
+        { 0x00, 0x00, 0xE0, 0x60, 0x60, 0x66, 0x6C, 0x78, 0x78, 0x6C, 0x66, 0xE6, 0x00, 0x00, 0x00, 0x00,  },       //0x6B, 'k'
+        { 0x00, 0x00, 0x38, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x3C, 0x00, 0x00, 0x00, 0x00,  },       //0x6C, 'l'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0xEC, 0xFE, 0xD6, 0xD6, 0xD6, 0xD6, 0xC6, 0x00, 0x00, 0x00, 0x00,  },       //0x6D, 'm'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0xDC, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00,  },       //0x6E, 'n'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x7C, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,  },       //0x6F, 'o'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0xDC, 0x66, 0x66, 0x66, 0x66, 0x66, 0x7C, 0x60, 0x60, 0xF0, 0x00,  },       //0x70, 'p'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x76, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0x7C, 0x0C, 0x0C, 0x1E, 0x00,  },       //0x71, 'q'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0xDC, 0x76, 0x66, 0x60, 0x60, 0x60, 0xF0, 0x00, 0x00, 0x00, 0x00,  },       //0x72, 'r'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x7C, 0xC6, 0x60, 0x38, 0x0C, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,  },       //0x73, 's'
+        { 0x00, 0x00, 0x10, 0x30, 0x30, 0xFC, 0x30, 0x30, 0x30, 0x30, 0x36, 0x1C, 0x00, 0x00, 0x00, 0x00,  },       //0x74, 't'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0x76, 0x00, 0x00, 0x00, 0x00,  },       //0x75, 'u'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x18, 0x00, 0x00, 0x00, 0x00,  },       //0x76, 'v'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0xC6, 0xC6, 0xD6, 0xD6, 0xD6, 0xFE, 0x6C, 0x00, 0x00, 0x00, 0x00,  },       //0x77, 'w'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0xC6, 0x6C, 0x38, 0x38, 0x38, 0x6C, 0xC6, 0x00, 0x00, 0x00, 0x00,  },       //0x78, 'x'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0x7E, 0x06, 0x0C, 0xF8, 0x00,  },       //0x79, 'y'
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0xFE, 0xCC, 0x18, 0x30, 0x60, 0xC6, 0xFE, 0x00, 0x00, 0x00, 0x00,  },       //0x7A, 'z'
+        { 0x00, 0x00, 0x0E, 0x18, 0x18, 0x18, 0x70, 0x18, 0x18, 0x18, 0x18, 0x0E, 0x00, 0x00, 0x00, 0x00,  },       //0x7B, '{'
+        { 0x00, 0x00, 0x18, 0x18, 0x18, 0x18, 0x00, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,  },       //0x7C, '|'
+        { 0x00, 0x00, 0x70, 0x18, 0x18, 0x18, 0x0E, 0x18, 0x18, 0x18, 0x18, 0x70, 0x00, 0x00, 0x00, 0x00,  },       //0x7D, '}'
+        { 0x00, 0x00, 0x76, 0xDC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  },       //0x7E, '~'
+};
+#define FONT_WIDTH   8
+#define FONT_HEIGHT 16
+#define FONT_FIRST_CHAR 0x20
+#define FONT_LAST_CHAR 0x7E
+static uint16_t charBuffer[FONT_WIDTH * FONT_HEIGHT];
 
+//*****************************************************************************
+// //***** Main 'C' Language entry point.  Toggle an LED using TivaWare *****//
+//*****************************************************************************
 int main(void){
+    //***** Clock config to run at 120 MHz *****//
+    sysClock = MAP_SysCtlClockFreqSet((SYSCTL_XTAL_25MHZ | SYSCTL_OSC_MAIN | SYSCTL_USE_PLL | SYSCTL_CFG_VCO_240), 120000000);
+    //***** Invoque configuration functions *****//
+    // Floating point unit enabling //
+    MAP_FPUEnable();
+    MAP_FPULazyStackingEnable();
+    // Buttons //
+    buttons_config();
+    // Leds //
+    leds_config();
+    // Spi1 //
+    spi1_config();
+    // uDMA //
+    uDMA_spi1_config();
+    // Timer //
+    timer0_config();
+    // ADC //
+    adc0_config();
+    // PWM //
+    pwm_init();
+    // Global ints enabling //
+    MAP_IntMasterEnable();
+    // Init display //
+    ili9341_init();
+    ili9341_fill_screen(BLACK);
+    ili9341_print_string(0, 0, "TivaC : TM4C1294NCPDT", RED, BLACK);
+    ili9341_print_string(0, 16, "2.4inch SPI Display : ILI9341", RED, BLACK);
+    ili9341_print_string(0, 32,"Voltaje :", BLUE, BLACK);
+    ili9341_print_string(120, 32,"Duty :", CYAN, BLACK);
+    ili9341_print_string(0, 48, "Corriente : ", YELLOW, BLACK);
     
-    uint32_t ui32SysClock;
-
-    //
-    // Run from the PLL at 120 MHz.
-    // Note: SYSCTL_CFG_VCO_240 is a new setting provided in TivaWare 2.2.x and
-    // later to better reflect the actual VCO speed due to SYSCTL#22.
-    //
-    ui32SysClock = SysCtlClockFreqSet((SYSCTL_XTAL_25MHZ |
-                                       SYSCTL_OSC_MAIN |
-                                       SYSCTL_USE_PLL |
-                                       SYSCTL_CFG_VCO_240), 120000000);
-
-    // Invoque configuration functions // 
-    ledsConfig();
-    buttonsConfig();
-    spi0Config(ui32SysClock);
-    initDisplay(ui32SysClock);
-    timer0Config();
-    IntMasterEnable();
-
-    
-    fillScreen(RED);
-    drawString(0, 0, "Hello TivaC TM4C1294NCPDT", BLACK, RED);
-    // Loop Forever
+    //***** Loop Forever *****//
     while(1){
-    }
-}
-// Functions definitions //
-void Timer0A_Handler(void){
-    TimerIntClear(TIMER0_BASE, TIMER_TIMA_TIMEOUT);  
-}
+        if(sw1State){ // SW1 pressed
+            sw1State = 0x0;
+            // Turn on led 3
+            MAP_GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_0 | GPIO_PIN_4, 0x10);
+        }
+        if(sw2State){// SW2 pressed
+            sw2State = 0x00;
+            // Turn on led 4
+            MAP_GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_0 | GPIO_PIN_4, 0x01);
+        }
 
-void timer0Config(void){
-    // Enable Timer0 peripheral
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER0);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_TIMER0));
-
-    // Configure Timer0 as 32-bit periodic timer
-    TimerConfigure(TIMER0_BASE, TIMER_CFG_ONE_SHOT);
-    
-    TimerIntEnable(TIMER0_BASE, TIMER_TIMA_TIMEOUT);
-    IntEnable(INT_TIMER0A);
-
-    //Start the timer
-    //TimerEnable(TIMER0_BASE, TIMER_A);
-}
-
-void delay_ms(uint32_t ms)
-{
-    // 120 MHz → 120000 cycles per ms
-    uint32_t load = (ms * 120000) - 1;
-
-    TimerDisable(TIMER0_BASE, TIMER_A);
-    TimerLoadSet(TIMER0_BASE, TIMER_A, load);
-
-    TimerEnable(TIMER0_BASE, TIMER_A);
-
-    // WAIT here
-    while (!TimerIntStatus(TIMER0_BASE, false));
-
-}
-
-void PortJ_Handler(void){
-    uint32_t status;
-
-    // Read interrupt status
-    status = GPIOIntStatus(GPIO_PORTJ_BASE, true);
-
-    // Clear interrupts immediately
-    GPIOIntClear(GPIO_PORTJ_BASE, status);
-
-    if(status & GPIO_PIN_0)
-    {
-        // SW1 pressed
-    drawInt(0, 10, 12345, WHITE, BLACK);
-    drawInt(0, 20, -6789, GREEN, BLACK);
-
-    }
-
-    if(status & GPIO_PIN_1)
-    {
-        // SW2 pressed
-        drawFloat(0, 30, 3.1416f, 3, CYAN, BLACK);
-        drawFloat(0, 40, -12.75f, 2, YELLOW, BLACK);
-
+       if(adc_ready){
+            adc_ready = 0;
+            volts = get_volts(adc_raw);
+            ili9341_print_float(80, 32, volts, 2, BLUE, BLACK);
+            pwm_set_from_adc();
+        }       
     }
 }
 
-void ledsConfig(void){
-    // Enable and wait on PORTN and PORTF enabling //
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPION);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPION));
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF));
-
-    // Configure PN0,PN1,PF0 and PF4 as output //
-    GPIOPinTypeGPIOOutput(GPIO_PORTN_BASE, GPIO_PIN_0 | GPIO_PIN_1);
-    GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_0 | GPIO_PIN_4);
-    // Turn LEDs off initially
-    GPIOPinWrite(GPIO_PORTN_BASE, GPIO_PIN_0 | GPIO_PIN_1, 0x00);
-    GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_0 | GPIO_PIN_4, 0x00);
-}
-
-void buttonsConfig(void){
+//*****************************************************************************
+// Function definitions.
+//*****************************************************************************
+// BUTTONS //
+void buttons_config(void){
     // Enable and wait on PORTJ enabling //
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOJ);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOJ));
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOJ);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOJ));
     // Configure PJ0 and PJ1 as input //
-    GPIOPinTypeGPIOInput(GPIO_PORTJ_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+    MAP_GPIOPinTypeGPIOInput(GPIO_PORTJ_BASE, GPIO_PIN_0 | GPIO_PIN_1);
     // Enable internal pull-ups //
-    GPIOPadConfigSet(GPIO_PORTJ_BASE,
-                     GPIO_PIN_0 | GPIO_PIN_1,
-                     GPIO_STRENGTH_2MA,
-                     GPIO_PIN_TYPE_STD_WPU);
+    MAP_GPIOPadConfigSet(GPIO_PORTJ_BASE,GPIO_PIN_0 | GPIO_PIN_1,GPIO_STRENGTH_2MA,GPIO_PIN_TYPE_STD_WPU);
     // Disable interrupts during setup
-    GPIOIntDisable(GPIO_PORTJ_BASE, GPIO_PIN_0 | GPIO_PIN_1);
-    GPIOIntClear(GPIO_PORTJ_BASE, GPIO_PIN_0 | GPIO_PIN_1);
-
+    MAP_GPIOIntDisable(GPIO_PORTJ_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+    MAP_GPIOIntClear(GPIO_PORTJ_BASE, GPIO_PIN_0 | GPIO_PIN_1);
     // Configure interrupt type: falling edge
-    GPIOIntTypeSet(GPIO_PORTJ_BASE,
-                   GPIO_PIN_0 | GPIO_PIN_1,
-                   GPIO_FALLING_EDGE);
-
+    MAP_GPIOIntTypeSet(GPIO_PORTJ_BASE,GPIO_PIN_0 | GPIO_PIN_1,GPIO_FALLING_EDGE);
     // Enable GPIO interrupt (NVIC)
-    IntEnable(INT_GPIOJ);
-
+    MAP_IntEnable(INT_GPIOJ);
     // Enable GPIO pin interrupts
-    GPIOIntEnable(GPIO_PORTJ_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+    MAP_GPIOIntEnable(GPIO_PORTJ_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+}
+
+void buttons_ints_handler(void){
+    // Read interrupt status from port J.
+    uint32_t status = MAP_GPIOIntStatus(GPIO_PORTJ_BASE, true);
+    // Clear interrupts immediately
+    MAP_GPIOIntClear(GPIO_PORTJ_BASE, status);
+    if(status & GPIO_PIN_0){// SW1 pressed
+        sw1State = 0x01;
+        return;
+    }
+
+    if(status & GPIO_PIN_1){// SW2 pressed
+        sw2State = 0x01;
+        return;
+    }
+}
+// LEDS //
+void leds_config(void){
+    // Enable and wait for PORTN and PORTF to be ready
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPION);
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF));
+    // Configure PN0,PN1,PF0 and PF4 as output
+    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTN_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_0 | GPIO_PIN_4);
+    // Turn LEDs off initially
+    MAP_GPIOPinWrite(GPIO_PORTN_BASE, GPIO_PIN_0 | GPIO_PIN_1, 0x00);
+    MAP_GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_0 | GPIO_PIN_4, 0x00);
+}
+
+// SPI1 for display //
+void spi1_config(void){
+    // Enabling and wait for QSSI module and ports B and E to be ready
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI1);
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOE));
+    // Configure pins for QSSI1 
+    // {PB2:rst,PB3:DC,PB4:CS,PB5:spi1_clk,PE4:spi1_tx,PE5:spi1_rx}
+    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTB_BASE,GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4);
+    MAP_GPIOPinConfigure(GPIO_PB5_SSI1CLK);
+    MAP_GPIOPinConfigure(GPIO_PE4_SSI1XDAT0);
+    MAP_GPIOPinConfigure(GPIO_PE5_SSI1XDAT1);
+    MAP_GPIOPinTypeSSI(GPIO_PORTB_BASE, GPIO_PIN_5);
+    MAP_GPIOPinTypeSSI(GPIO_PORTE_BASE, GPIO_PIN_4 | GPIO_PIN_5);
+    // Pin PB4 HIGH to dissable the display.
+    MAP_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_4, GPIO_PIN_4);
+    // Config QSSI1 module, master mode, 16bits len.
+    MAP_SSIDisable(SSI1_BASE);
+    SSIClockSourceSet(SSI1_BASE, SSI_CLOCK_SYSTEM);
+    MAP_SSIConfigSetExpClk(SSI1_BASE, sysClock, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,50000000, 16);
+    MAP_SSIEnable(SSI1_BASE);
+}
+
+void spi1_data_len(uint32_t len){
+    MAP_SSIDisable(SSI1_BASE);
+    MAP_SSIConfigSetExpClk(SSI1_BASE, sysClock, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,50000000, len);
+    MAP_SSIEnable(SSI1_BASE);
+}
+
+// uDMA //
+void uDMA_spi1_config(void){
+    // Enable uDMA peripheral
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_UDMA);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_UDMA));
+    // Enable uDMA controller
+    MAP_uDMAEnable();
+    // Set base address of control table
+    MAP_uDMAControlBaseSet(uDMAControlTable);
+    // Enable uDMA on SSI1 TX
+    MAP_SSIDMAEnable(SSI1_BASE, SSI_DMA_TX);
+    // Optional but safe
+    MAP_uDMAChannelAssign(UDMA_CH25_SSI1TX);
+    // Disable channel before configuration
+    MAP_uDMAChannelDisable(UDMA_CH25_SSI1TX);
+    // Configure channel
+    MAP_uDMAChannelControlSet(UDMA_CH25_SSI1TX | UDMA_PRI_SELECT,
+        UDMA_SIZE_16 |        // 16-bit data
+        UDMA_SRC_INC_16 |     // increment source
+        UDMA_DST_INC_NONE |   // SSI FIFO
+        UDMA_ARB_8);          // burst of 8 words
+    // Enable uDMA ints
+}
+
+void uDMA_spi1_send_buffer(uint16_t* dataBuffer, uint32_t bufferLen){
+    // Disable channel before setup
+    MAP_uDMAChannelDisable(UDMA_CH25_SSI1TX);
+    // Configure transfer
+    MAP_uDMAChannelTransferSet(
+        UDMA_CH25_SSI1TX | UDMA_PRI_SELECT,
+        UDMA_MODE_BASIC,
+        dataBuffer,
+        (void *)(SSI1_BASE + SSI_O_DR),
+        bufferLen
+    );
+    // Start transfer
+    MAP_uDMAChannelEnable(UDMA_CH25_SSI1TX);
+}
+
+// TIMER0 //
+void timer0_config(void){
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER0);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_TIMER0));
+
+    MAP_TimerDisable(TIMER0_BASE, TIMER_A);
+
+    MAP_TimerConfigure(TIMER0_BASE, TIMER_CFG_PERIODIC);
+
+    // 120 MHz / 1000 = 120,000 ticks → 1 ms
+    MAP_TimerLoadSet(TIMER0_BASE, TIMER_A, (120000 - 1));
+
+    // Habilitar evento de disparo para ADC
+    MAP_TimerControlTrigger(TIMER0_BASE, TIMER_A, true);
+
+    MAP_TimerEnable(TIMER0_BASE, TIMER_A);
+}
+
+// ADC //
+void adc0_config(void){
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_ADC0);
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOD);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOD));
+
+    // PD7 como ADC
+    MAP_GPIOPinTypeADC(GPIO_PORTD_BASE, GPIO_PIN_7);
+    // Sequencer 3, trigger por TIMER
+    MAP_ADCSequenceConfigure(ADC0_BASE, 3, ADC_TRIGGER_TIMER, 0);
+    // Disable sequencer 3 during config
+    ADCSequenceDisable(ADC0_BASE, 3);
+    // Canal AIN4 (PD7)
+    MAP_ADCSequenceStepConfigure(ADC0_BASE, 3, 0,ADC_CTL_CH4 | ADC_CTL_IE | ADC_CTL_END);
+    // Usa VDDA (3.3 V)
+    MAP_ADCReferenceSet(ADC0_BASE, ADC_REF_EXT_3V);
+
+    MAP_ADCSequenceEnable(ADC0_BASE, 3);
+    MAP_ADCIntEnable(ADC0_BASE, 3);
+    MAP_IntEnable(INT_ADC0SS3);
+}
+
+// PWM //
+void pwm_config(void){
+    uint32_t pwmClock;
+    uint32_t load;
+
+    // 1) Habilitar periféricos
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_PWM0);
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOG);
+
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_PWM0));
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOG));
+
+    // 2) Configurar PG0 como PWM (M0PWM4)
+    MAP_GPIOPinConfigure(GPIO_PG0_M0PWM4);
+    MAP_GPIOPinTypePWM(GPIO_PORTG_BASE, GPIO_PIN_0);
+
+    // 3) Reloj del PWM = SYSCLK / 64
+    MAP_SysCtlPWMClockSet(SYSCTL_PWMDIV_64);
+    pwmClock = sysClock / 64;
+
+    // 4) Calcular periodo
+    load = (pwmClock / PWM_FREQUENCY) - 1;
+
+    // 5) Configurar generador 2
+    MAP_PWMGenConfigure(PWM0_BASE, PWM_GEN_2,
+                     PWM_GEN_MODE_DOWN | PWM_GEN_MODE_NO_SYNC);
+
+    MAP_PWMGenPeriodSet(PWM0_BASE, PWM_GEN_2, load);
+
+    // Duty inicial = 0%
+    MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_4, 0);
+
+    // 6) Habilitar PWM
+    MAP_PWMGenEnable(PWM0_BASE, PWM_GEN_2);
+    MAP_PWMOutputState(PWM0_BASE, PWM_OUT_4_BIT, true);
+}
+
+void pwm_set_from_adc(void){
+    uint32_t load;
+    uint32_t pulse;
+    float duty;
+
+    if(adc_raw > 4095)
+        adc_raw = 4095;
+
+    // Obtener el periodo actual del PWM
+    load = MAP_PWMGenPeriodGet(PWM0_BASE, PWM_GEN_2);
+
+    // Escalar ADC (0–4095) → (0–LOAD)
+    pulse = (adc_raw * load) / 4095;
+
+    // Evitar 100% exacto (opcional, pero recomendable)
+    if(pulse >= load)
+        pulse = load - 1;
+
+    MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_4, pulse);
+    // Duty normalizado (0.0 – 1.0)
+    duty = (float)pulse / (float)load;
+    ili9341_print_float(180, 32 , duty, 2, CYAN, BLACK);
+}
+
+void pwm_init(void){
+    uint32_t load;
+
+    // 1. Habilitar periféricos
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_PWM0);
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOG);
+
+    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_PWM0));
+    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOG));
+
+    // 2. Configurar reloj del PWM (System clock / 64)
+    SysCtlPWMClockSet(SYSCTL_PWMDIV_64);
+
+    // 3. Configurar PG0 como M0PWM4
+    GPIOPinConfigure(GPIO_PG0_M0PWM4);
+    GPIOPinTypePWM(GPIO_PORTG_BASE, GPIO_PIN_0);
+
+    // 4. Configurar generador PWM (Gen 2)
+    PWMGenConfigure(PWM0_BASE, PWM_GEN_2,
+                     PWM_GEN_MODE_DOWN | PWM_GEN_MODE_NO_SYNC);
+
+    // 5. Calcular LOAD para 10 kHz
+    load = (sysClock / 1 / 10000) - 1;
+
+    PWMGenPeriodSet(PWM0_BASE, PWM_GEN_2, load);
+
+    // 6. Duty cycle 50%
+    PWMPulseWidthSet(PWM0_BASE, PWM_OUT_4, load / 2);
+
+    // 7. Habilitar salida PWM
+    PWMOutputState(PWM0_BASE, PWM_OUT_4_BIT, true);
+
+    // 8. Arrancar el generador
+    PWMGenEnable(PWM0_BASE, PWM_GEN_2);
+}
+
+void adc0_seq3_handler(void){
+    MAP_ADCIntClear(ADC0_BASE, 3);
+    MAP_ADCSequenceDataGet(ADC0_BASE, 3, &adc_raw);
+    adc_ready = 0x01;
+}
+// DISPLAY //
+void ili9341_reset(void){
+
+    // PB2 to low for resete 
+    MAP_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_2, 0x00);
+    MAP_SysCtlDelay((sysClock / 3000) * 5); // ~5ms
+    // PB2 pin to high 
+    MAP_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_2, GPIO_PIN_2);
+    SysCtlDelay((sysClock / 3000) * 5); // ~5ms
+}
+
+void ili9341_send_command(uint8_t cmd){
+    // PB4 and PB3 to low (Enable the Display and put it in command mode)
+    MAP_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_3 | GPIO_PIN_4, 0x00);
+    // Send the command trough SPI1
+    MAP_SSIDataPut(SSI1_BASE, cmd);
+    // Wait for data to be tansfered
+    while(MAP_SSIBusy(SSI1_BASE));
+    // PB4 high to disabble the display
+    MAP_GPIOPinWrite(GPIO_PORTB_BASE,GPIO_PIN_4, GPIO_PIN_4);
+}
+
+void ili9341_send_data(uint8_t data){
+    // PB4 low to enable the Display and PB3 high to data mode
+    MAP_GPIOPinWrite(GPIO_PORTB_BASE,GPIO_PIN_3 | GPIO_PIN_4, 0x08);
+    // Send the data to the SPI1
+    MAP_SSIDataPut(SSI1_BASE, data);
+    // Wait for data to be tansfered
+    while(MAP_SSIBusy(SSI1_BASE));
+    // PB4 high to disabble the display
+    MAP_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_4, GPIO_PIN_4);
+}
+
+void ili9341_init(void){ 
+    uint16_t i; 
+    ili9341_reset();
+    // Change to 8bit len to send commands
+    spi1_data_len(8);
+    ili9341_send_command(0x01); // Software reset
+    MAP_SysCtlDelay((sysClock / 3000) * 10);   // ~10ms
+    ili9341_send_command(0x11); // Sleep out
+    MAP_SysCtlDelay((sysClock / 3000) * 120);   // ~120ms
+    ili9341_send_command(0x3A); // Pixel Format
+    ili9341_send_data(0x55); // RGB565
+    ili9341_send_command(0x36); // MADCTL
+    ili9341_send_data(0x00); // RGB, 0 degrees rotation
+    // ---- Power Control ----
+    ili9341_send_command(0xC1); // Power Control 1
+    ili9341_send_data(0x20);
+    // ---- VCOM Control ----
+    ili9341_send_command(0xC5);
+    ili9341_send_data(0x3E);
+    ili9341_send_data(0x28);
+
+    ili9341_send_command(0xC7);
+    ili9341_send_data(0x86);
+
+    // ---- Frame Rate Control ----
+    ili9341_send_command(0xB1);
+    ili9341_send_data(0x00);
+    ili9341_send_data(0x18);   // ~79Hz
+
+    // ---- Gamma ----
+    ili9341_send_command(0x26);
+    ili9341_send_data(0x01);   // Gamma ON
+
+    ili9341_send_command(0xE0); // Positive Gamma
+    uint8_t pgamma[] = {
+        0x0F,0x31,0x2B,0x0C,0x0E,0x08,
+        0x4E,0xF1,0x37,0x07,0x10,0x03,
+        0x0E,0x09,0x00
+    };
+    for(i=0;i<15;i++) ili9341_send_data(pgamma[i]);
+
+    ili9341_send_command(0xE1); // Negative Gamma
+    uint8_t ngamma[] = {
+        0x00,0x0E,0x14,0x03,0x11,0x07,
+        0x31,0xC1,0x48,0x08,0x0F,0x0C,
+        0x31,0x36,0x0F
+    };
+    for(i=0;i<15;i++) ili9341_send_data(ngamma[i]);
+
+    // ---- Interface Control (SPI estable) ----
+    ili9341_send_command(0xF6);
+    ili9341_send_data(0x01);
+    ili9341_send_data(0x00);
+    ili9341_send_data(0x00);
+
+    ili9341_send_command(0xC1); // Power Control 2
+    ili9341_send_data(0x10);
+    ili9341_send_command(0x29);
+    // Change to 16 bit len for send pixels data
+    spi1_data_len(16); 
+}
+
+void ili9341_set_window(uint16_t x0, uint16_t y0,uint16_t x1, uint16_t y1){
+    // Config spi3 to send command and data configuration
+    spi1_data_len(8);
+    // Column Address Set (CASET)
+    ili9341_send_command(0x2A);
+    ili9341_send_data(x0 >> 8);     // X start high
+    ili9341_send_data(x0 & 0xFF);   // X start low
+    ili9341_send_data(x1 >> 8);     // X end high
+    ili9341_send_data(x1 & 0xFF);   // X end low
+
+    // Page Address Set (PASET)
+    ili9341_send_command(0x2B);
+    ili9341_send_data(y0 >> 8);     // Y start high
+    ili9341_send_data(y0 & 0xFF);   // Y start low
+    ili9341_send_data(y1 >> 8);     // Y end high
+    ili9341_send_data(y1 & 0xFF);   // Y end low
+
+    // Write to RAM
+    ili9341_send_command(0x2C);
+    // Config spi3 to send pixels data
+    spi1_data_len(16);
     
 }
 
-void spi0Config(uint32_t clkFreq){
-    // Emabling and wait fot periphs
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI0);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_SSI0));
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOA));
-    // Configure PA0, PA4 and PA5 for QSSI0 (CLK,MOSI,MISO)
-    GPIOPinConfigure(GPIO_PA2_SSI0CLK);
-    GPIOPinConfigure(GPIO_PA4_SSI0XDAT0);
-    GPIOPinConfigure(GPIO_PA5_SSI0XDAT1);
-    // Configure GPIO Port A to use some pins as QSSI mode
-    GPIOPinTypeSSI(GPIO_PORTA_BASE, GPIO_PIN_2 | GPIO_PIN_4 | GPIO_PIN_5);
-    // Configure PA3, PA6 and PA7 as CS, DC and RST
-    GPIOPinTypeGPIOOutput(GPIO_PORTA_BASE, GPIO_PIN_3 | GPIO_PIN_6 | GPIO_PIN_7);
-    // Config QSSI0
-    SSIConfigSetExpClk(SSI0_BASE, clkFreq, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,20000000, 8);
-    // Enable QSSI0
-    SSIEnable(SSI0_BASE);
+void ili9341_fill_screen(uint16_t color){
+    uint32_t i;
+    // Prepare one line
+    for(i = 0; i < ILI9341_WIDTH * LINES_PER_BUFFER; i++)
+        colorBuffer[i] = color;
+    // Set full window
+    ili9341_set_window(0, 0,ILI9341_WIDTH - 1,ILI9341_HEIGHT - 1);
+    // PB4 low to enable the Display and PB3 high to data mode
+    MAP_GPIOPinWrite(GPIO_PORTB_BASE,GPIO_PIN_3 | GPIO_PIN_4, 0x08); 
+    // Stream lines using uDMA
+    for(i = 0; i < ILI9341_HEIGHT;)
+        if(!MAP_uDMAChannelSizeGet(UDMA_CH25_SSI1TX | UDMA_PRI_SELECT) && !SSIBusy(SSI1_BASE)){    
+        uDMA_spi1_send_buffer(colorBuffer, ILI9341_WIDTH * LINES_PER_BUFFER);
+        i+=LINES_PER_BUFFER;
+        }
 }
 
-void initDisplay(uint32_t clkFreq){
-    resetDisplay(clkFreq);
-    sendDisplayCommand(0x01); // Software reset
-    SysCtlDelay(clkFreq/30);
-    sendDisplayCommand(0x11); // Sleep out
-    SysCtlDelay(clkFreq/30);
-    sendDisplayCommand(0x3A); // Pixel Format
-    sendDisplayData(0x55); // RGB565
-    sendDisplayCommand(0x36); // MADCTL
-    sendDisplayData(0xC0); // RGB, 180 degrees rotation
-    sendDisplayCommand(0x29);
-    SysCtlDelay(clkFreq/30);
+void ili9341_draw_char(uint16_t x, uint16_t y,char c,uint16_t fg, uint16_t bg){
+    // Usefull variables to fill the buffer
+    uint8_t row, col;
+    uint8_t line;
+    uint32_t idx = 0;
 
-}
-
-void resetDisplay(uint32_t clkFreq){
-    // RESET pin to low //
-    GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, 0);
-    //
-    SysCtlDelay(clkFreq/30);
-    // RESTE pin to high //
-    GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, GPIO_PIN_7);
-    SysCtlDelay(clkFreq/30);
-}
-
-void sendDisplayCommand(uint8_t cmd){
-    // CS and DC to low (Enable the Display and put it in command mode) //
-    GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_3 | GPIO_PIN_6, 0);
-    // Send the command to the SPI0 //
-    SSIDataPut(SSI0_BASE, cmd);
-    // Wait for data to be tansfered //
-    while(SSIBusy(SSI0_BASE));
-    // CS high to disabble the display //
-    GPIOPinWrite(GPIO_PORTA_BASE,GPIO_PIN_6, GPIO_PIN_6);
-}
-
-void sendDisplayData(uint8_t data){
-    // CS low to enable the Display and DC high to data mode //
-    GPIOPinWrite(GPIO_PORTA_BASE,GPIO_PIN_3 | GPIO_PIN_6, 0x08);
-    // Send the data to the SPI3 //
-    SSIDataPut(SSI0_BASE, data);
-    // Wait for data to be tansfered //
-    while(SSIBusy(SSI0_BASE));
-    // CS high to disabble the display //
-    GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, GPIO_PIN_6);
-}
-
-void setDisplayWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1){
-    sendDisplayCommand(0x2A);// Column addr set
-    sendDisplayData(x0 >> 8);
-    sendDisplayData(x0 & 0xFF);
-    sendDisplayData(x1 >> 8);
-    sendDisplayData(x1 & 0xFF);
-
-    sendDisplayCommand(0x2B);// Page addr set
-    sendDisplayData(y0 >> 8);
-    sendDisplayData(y0 & 0xFF);
-    sendDisplayData(y1 >> 8);
-    sendDisplayData(y1 & 0xFF);
-
-    sendDisplayCommand(0x2C);// Memory write
-}
-
-void drawSinglePixel(uint16_t x, uint16_t y, uint16_t color)
-{
-    setDisplayWindow(x, y, x, y);
-
-    sendDisplayData(color >> 8);
-    sendDisplayData(color & 0xFF);
-}
-
-void drawChar(uint16_t x, uint16_t y, char c,
-                      uint16_t color, uint16_t bg)
-{
-    if (c < 32 || c > 126) return;
-    uint8_t row, col; 
-    for (col = 0; col < 5; col++)
+    if (c < 0x20 || c > 0x7F)
+    c = '?';
+    // 1. Preparar buffer del carácter
+    for(row = 0; row < FONT_HEIGHT; row++)
     {
-        uint8_t line = Font5x7[(c - 32) * 5 + col];
+        line = font8x16[c - FONT_FIRST_CHAR][row];
 
-        for (row = 0; row < 8; row++)
+        for(col = 0; col < FONT_WIDTH; col++)
         {
-            if (line & 0x01)
-                drawSinglePixel(x + col, y + row, color);
+            if(line & (0x80 >> col))
+                charBuffer[idx++] = fg;
             else
-                drawSinglePixel(x + col, y + row, bg);
-
-            line >>= 1;
+                charBuffer[idx++] = bg;
         }
     }
+    // 2. Seleccionar ventana
+    ili9341_set_window(x, y,x + FONT_WIDTH  - 1,y + FONT_HEIGHT - 1);
+    // 3. PB4 low to enable the Display and PB3 high to data mode
+    MAP_GPIOPinWrite(GPIO_PORTB_BASE,GPIO_PIN_3 | GPIO_PIN_4, 0x08);
+    // 4. Enviar buffer por uDMA
+    uDMA_spi1_send_buffer(charBuffer,FONT_WIDTH * FONT_HEIGHT);
 }
 
-void drawString(uint16_t x, uint16_t y,
-                        const char *str,
-                        uint16_t color, uint16_t bg)
-{
-    while (*str)
+void ili9341_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fg,uint16_t bg){
+    uint16_t cx = x;
+    uint16_t cy = y;
+
+    while(*str)
     {
-        drawChar(x, y, *str, color, bg);
-        x += 6; // 5 pixels + 1 spacing
-        str++;
+        if(*str == '\n'){
+            cx = x;
+            cy += FONT_HEIGHT;
+        }else{
+            if(!MAP_uDMAChannelSizeGet(UDMA_CH25_SSI1TX | UDMA_PRI_SELECT) && !SSIBusy(SSI1_BASE)){  
+                ili9341_draw_char(cx, cy, *str, fg, bg);
+                cx += FONT_WIDTH;
+                str++;
+            }
+        }
     }
+} 
+
+void ili9341_print_int(uint16_t x, uint16_t y,int32_t num,uint16_t color, uint16_t bg){
+    char buf[12];
+    intToStr(num, buf);
+    ili9341_print_string(x,y,buf,color,bg);
 }
 
-
-void fillScreen(uint16_t color){
-    uint32_t pixels = ILI9341_WIDTH * ILI9341_HEIGHT;
-
-    setDisplayWindow(0, 0,
-                          ILI9341_WIDTH - 1,
-                          ILI9341_HEIGHT - 1);
-
-    uint8_t hi = color >> 8;
-    uint8_t lo = color & 0xFF;
-
-    while (pixels--)
-    {
-        sendDisplayData(hi);
-        sendDisplayData(lo);
-    }
+void ili9341_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint16_t color, uint16_t bg){
+    char buf[12];
+    floatToStr(num, buf,decimals);
+    ili9341_print_string(x,y,buf,color,bg);
 }
 
-void intToStr(int32_t value, char *buf)
-{
+// Funciones de apoyo
+void intToStr(int32_t value, char *buf){
     char tmp[12];
     int i = 0, j = 0;
 
@@ -474,8 +773,7 @@ void intToStr(int32_t value, char *buf)
     buf[j] = '\0';
 }
 
-void floatToStr(float value, char *buf, uint8_t decimals)
-{
+void floatToStr(float value, char *buf, uint8_t decimals){
     int32_t intPart;
     float frac;
     int i = 0,j = 0;
@@ -510,21 +808,6 @@ void floatToStr(float value, char *buf, uint8_t decimals)
     buf[i] = '\0';
 }
 
-
-void drawInt(uint16_t x, uint16_t y,
-                     int32_t value,
-                     uint16_t color, uint16_t bg)
-{
-    char buf[12];
-    intToStr(value, buf);
-    drawString(x, y, buf, color, bg);
-}
-
-void drawFloat(uint16_t x, uint16_t y,
-                       float value, uint8_t decimals,
-                       uint16_t color, uint16_t bg)
-{
-    char buf[20];
-    floatToStr(value, buf, decimals);
-    drawString(x, y, buf, color, bg);
+float get_volts(uint32_t adc_value){
+   return ((float)adc_value * 3.3f) / 4095.0f;
 }
