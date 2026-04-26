@@ -25,9 +25,6 @@
 #include <stdint.h>
 #include "inc/hw_nvic.h"
 #include "inc/hw_types.h"
-// Functions to handle interrupts
-extern void PortJ_Handler(void);
-extern void Timer0A_Handler(void);
 
 //*****************************************************************************
 //
@@ -38,6 +35,12 @@ void ResetISR(void);
 static void NmiSR(void);
 static void FaultISR(void);
 static void IntDefaultHandler(void);
+
+//*****************************************************************************
+// //***** Functions to handle interrupts *****//
+//*****************************************************************************
+extern void buttons_ints_handler(void);
+extern void adc0_seq3_handler(void);
 
 //*****************************************************************************
 //
@@ -98,9 +101,9 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // ADC Sequence 0
     IntDefaultHandler,                      // ADC Sequence 1
     IntDefaultHandler,                      // ADC Sequence 2
-    IntDefaultHandler,                      // ADC Sequence 3
+    adc0_seq3_handler,                      // ADC Sequence 3
     IntDefaultHandler,                      // Watchdog timer
-    Timer0A_Handler,                     // Timer 0 subtimer A
+    IntDefaultHandler,                      // Timer 0 subtimer A
     IntDefaultHandler,                      // Timer 0 subtimer B
     IntDefaultHandler,                      // Timer 1 subtimer A
     IntDefaultHandler,                      // Timer 1 subtimer B
@@ -132,7 +135,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // ADC1 Sequence 2
     IntDefaultHandler,                      // ADC1 Sequence 3
     IntDefaultHandler,                      // External Bus Interface 0
-    PortJ_Handler,                       // GPIO Port J
+    buttons_ints_handler,                 // GPIO Port J
     IntDefaultHandler,                      // GPIO Port K
     IntDefaultHandler,                      // GPIO Port L
     IntDefaultHandler,                      // SSI2 Rx and Tx
