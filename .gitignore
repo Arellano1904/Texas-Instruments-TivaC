@@ -58,3 +58,16 @@ EK-TM4C123GXL/Proyectos/timer/.settings/org.eclipse.core.resources.prefs
 
 
 /workspace/
+
+2.4DisplayHat/Debug/
+2.4DisplayHat/targetConfigs/
+2.4DisplayHat/.ccsproject
+2.4DisplayHat/.clangd
+2.4DisplayHat/.cproject
+2.4DisplayHat/.project
+2.4DisplayHat/.settings/org.eclipse.cdt.codan.core.prefs
+2.4DisplayHat/macros.ini_initial
+2.4DisplayHat/target_config.ccxml
+2.4DisplayHat/.settings/org.eclipse.core.resources.prefs
+.theia/launch.json
+2.4DisplayHat/main.cmd
