@@ -129,17 +129,17 @@ static uint16_t charBuffer[FONT_WIDTH * FONT_HEIGHT];
 
 // DISPLAY //
 void ili9341_reset(void){
-    // PK3 to low for reset.
-    MAP_GPIOPinWrite(GPIO_PORTK_BASE, GPIO_PIN_3, 0x00);
+    // PM0 to low for reset.
+    MAP_GPIOPinWrite(GPIO_PORTM_BASE, GPIO_PIN_0, 0x00);
     MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
-    // PK3 pin to high 
-    MAP_GPIOPinWrite(GPIO_PORTK_BASE, GPIO_PIN_3, GPIO_PIN_3);
+    // PM0 pin to high 
+    MAP_GPIOPinWrite(GPIO_PORTM_BASE, GPIO_PIN_0, GPIO_PIN_0);
     SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
 }
 
 void ili9341_send_command(uint8_t cmd){
-    // PK2 and PA3 to low (Enable the Display and put it in command mode)
-    MAP_GPIOPinWrite(GPIO_PORTK_BASE, GPIO_PIN_2, 0x00);
+    // PM1 and PA3 to low (Enable the Display and put it in command mode)
+    MAP_GPIOPinWrite(GPIO_PORTM_BASE, GPIO_PIN_1, 0x00);
     MAP_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_3 , 0x00);
     // Send the command trough SPI1
     MAP_SSIDataPut(SSI0_BASE, cmd);
@@ -150,9 +150,9 @@ void ili9341_send_command(uint8_t cmd){
 }
 
 void ili9341_send_data(uint8_t data){
-    // PA3 low to enable the Display and PK2 high to data mode
+    // PA3 low to enable the Display and PM1 high to data mode
     MAP_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_3 , 0x00);
-    MAP_GPIOPinWrite(GPIO_PORTK_BASE,GPIO_PIN_2, GPIO_PIN_2);
+    MAP_GPIOPinWrite(GPIO_PORTM_BASE,GPIO_PIN_1, GPIO_PIN_1);
     // Send the data to the SPI0
     MAP_SSIDataPut(SSI0_BASE, data);
     // Wait for data to be tansfered
@@ -210,9 +210,9 @@ void ili9341_fill_screen(uint16_t color){
         colorBuffer[i] = color;
     // Set full window
     ili9341_set_window(0, 0,ILI9341_WIDTH - 1,ILI9341_HEIGHT - 1);
-    // PA3 low to enable the Display and PK2 high to data mode
+    // PA3 low to enable the Display and PM1 high to data mode
     MAP_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_3 , 0x00);
-    MAP_GPIOPinWrite(GPIO_PORTK_BASE,GPIO_PIN_2, GPIO_PIN_2);
+    MAP_GPIOPinWrite(GPIO_PORTM_BASE,GPIO_PIN_1, GPIO_PIN_1);
     // Stream lines using uDMA
     for(i = 0; i < ILI9341_HEIGHT;)
         if(!MAP_uDMAChannelSizeGet(UDMA_CH11_SSI0TX | UDMA_PRI_SELECT) && !SSIBusy(SSI0_BASE)){    
@@ -244,9 +244,9 @@ void ili9341_draw_char(uint16_t x, uint16_t y,char c,uint16_t fg, uint16_t bg){
     }
     // 2. Seleccionar ventana
     ili9341_set_window(x, y,x + FONT_WIDTH  - 1,y + FONT_HEIGHT - 1);
-    // PA3 low to enable the Display and PK2 high to data mode
+    // PA3 low to enable the Display and PM1 high to data mode
     MAP_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_3 , 0x00);
-    MAP_GPIOPinWrite(GPIO_PORTK_BASE,GPIO_PIN_2, GPIO_PIN_2);
+    MAP_GPIOPinWrite(GPIO_PORTM_BASE,GPIO_PIN_1, GPIO_PIN_1);
     // 4. Enviar buffer por uDMA
     uDMA_spi0_send_buffer(charBuffer,FONT_WIDTH * FONT_HEIGHT);
 }
@@ -284,17 +284,17 @@ void ili9341_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint
 
 // SPI0 for display //
 void spi0_config(void){
-    // Enabling and wait for QSSI module and ports A and K to be ready
+    // Enabling and wait for QSSI module and ports A and M to be ready
     MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI0);
     while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_SSI0));
     MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
     while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOA));
-    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOK);
-    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOK));
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOM);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOM));
     // Configure pins for QSSI0
     // {PA2:Clk,PA3:CS,PA4:TX,PA5:RX,PK3:rst,PK2:C/D}
     MAP_GPIOPinTypeGPIOOutput(GPIO_PORTA_BASE,GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4);
-    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTK_BASE,GPIO_PIN_2 | GPIO_PIN_3);
+    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTM_BASE,GPIO_PIN_0 | GPIO_PIN_1);
     MAP_GPIOPinTypeGPIOInput(GPIO_PORTA_BASE,GPIO_PIN_5);
     MAP_GPIOPinConfigure(GPIO_PA2_SSI0CLK);
     MAP_GPIOPinConfigure(GPIO_PA4_SSI0XDAT0);

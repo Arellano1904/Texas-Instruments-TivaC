@@ -81,9 +81,11 @@ int main(void){
     while(1){
         if(sw1State){ // SW1 pressed
             sw1State = 0x0;
+            ili9341_fill_screen(RED);
         }
         if(sw2State){// SW2 pressed
             sw2State = 0x00;
+            ili9341_fill_screen(BLUE);
         }
     }
 }
