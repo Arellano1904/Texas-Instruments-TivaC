@@ -58,6 +58,7 @@ void ili9341_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint
 // uDMA //
 void uDMA_spi0_config(void);
 void uDMA_spi0_send_buffer(uint16_t* dataBuffer, uint32_t bufferLen);
+static inline void fill_buf_u32(uint16_t *buf, uint16_t color, uint32_t pixels);
 // SPI0 FOR DISPLAY //
 void spi0_config(void);
 void spi0_data_len(uint32_t len);

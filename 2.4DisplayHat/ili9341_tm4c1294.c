@@ -122,8 +122,13 @@ static const unsigned char font8x16[][16] = {
 // For uDMA use 
 #pragma DATA_ALIGN(uDMAControlTable, 1024);
 uint8_t uDMAControlTable[1024];
-#define LINES_PER_BUFFER 4
-uint16_t colorBuffer[ILI9341_WIDTH * LINES_PER_BUFFER];
+#define LINES_PER_BUFFER    4                                        /* DO NOT exceed 4 for 240-wide panels */
+#define PIXELS_PER_BUFFER   (ILI9341_WIDTH * LINES_PER_BUFFER)      /* 960  — fits uDMA 1024 limit         */
+#define TOTAL_TRANSFERS     (ILI9341_HEIGHT / LINES_PER_BUFFER)     /* 80 */
+#pragma DATA_ALIGN(colorBufA, 4)
+static uint16_t colorBufA[PIXELS_PER_BUFFER];
+#pragma DATA_ALIGN(colorBufB, 4)
+static uint16_t colorBufB[PIXELS_PER_BUFFER];
 static uint16_t charBuffer[FONT_WIDTH * FONT_HEIGHT];
 
 
@@ -214,21 +219,34 @@ void ili9341_set_window(uint16_t x0, uint16_t y0,uint16_t x1, uint16_t y1){
     
 }
 
-void ili9341_fill_screen(uint16_t color){
-    uint32_t i;
-    // Prepare one line
-    for(i = 0; i < ILI9341_WIDTH * LINES_PER_BUFFER; i++)
-        colorBuffer[i] = color;
-    // Set full window
-    ili9341_set_window(0, 0,ILI9341_WIDTH - 1,ILI9341_HEIGHT - 1);
+void ili9341_fill_screen(uint16_t color)
+{
+    uint32_t  i;
+    uint16_t *pingpong[2] = { colorBufA, colorBufB };
+
+    /* Init both buffers once (they share the same colour for a plain fill) */
+    fill_buf_u32(colorBufA, color, PIXELS_PER_BUFFER);
+    fill_buf_u32(colorBufB, color, PIXELS_PER_BUFFER);
+
+    ili9341_set_window(0, 0, ILI9341_WIDTH - 1, ILI9341_HEIGHT - 1);
     ili9341_enable();
     ili9341_data_mode();
-    // Stream lines using uDMA
-    for(i = 0; i < ILI9341_HEIGHT;)
-        if(!MAP_uDMAChannelSizeGet(UDMA_CH11_SSI0TX | UDMA_PRI_SELECT) && !SSIBusy(SSI0_BASE)){    
-        uDMA_spi0_send_buffer(colorBuffer, ILI9341_WIDTH * LINES_PER_BUFFER);
-        i+=LINES_PER_BUFFER;
-        }
+
+    for (i = 0; i < TOTAL_TRANSFERS; i++)
+    {
+        /*
+         * Wait only for DMA done — NOT for SSIBusy.
+         * The FIFO keeps clocking bits out in the background while we poll.
+         * The next DMA burst starts feeding the FIFO as soon as it has room,
+         * with zero dead time on the SPI bus.
+         */
+        while (MAP_uDMAChannelSizeGet(UDMA_CH11_SSI0TX | UDMA_PRI_SELECT)) { }
+
+        uDMA_spi0_send_buffer(pingpong[i & 1], PIXELS_PER_BUFFER);
+    }
+
+    /* Wait for the shift register to drain only once, at the very end */
+    while (SSIBusy(SSI0_BASE)) { }
 }
 
 void ili9341_draw_char(uint16_t x, uint16_t y,char c,uint16_t fg, uint16_t bg){
@@ -345,7 +363,7 @@ void uDMA_spi0_config(void){
         UDMA_SIZE_16 |        // 16-bit data
         UDMA_SRC_INC_16 |     // increment source
         UDMA_DST_INC_NONE |   // SSI FIFO
-        UDMA_ARB_1);          // burst of 8 words
+        UDMA_ARB_8);          // burst of 8 words
     // Enable uDMA ints
 }
 
@@ -362,6 +380,14 @@ void uDMA_spi0_send_buffer(uint16_t* dataBuffer, uint32_t bufferLen){
     );
     // Start transfer
     MAP_uDMAChannelEnable(UDMA_CH11_SSI0TX);
+}
+
+static inline void fill_buf_u32(uint16_t *buf, uint16_t color, uint32_t pixels){
+    uint32_t  word  = ((uint32_t)color << 16) | color;  /* 2 pixels packed */
+    uint32_t *wp    = (uint32_t *)buf;
+    uint32_t  i;
+    for (i = 0; i < pixels / 2; i++) wp[i] = word;
+    if (pixels & 1) buf[pixels - 1] = color;            /* handle odd tail  */
 }
 
 // Funciones de apoyo
