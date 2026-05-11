@@ -128,59 +128,70 @@ static uint16_t charBuffer[FONT_WIDTH * FONT_HEIGHT];
 
 
 // DISPLAY //
+void ili9341_enable(void){
+    MAP_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_3 , 0x00);
+}
+void ili9341_disable(void){
+    MAP_GPIOPinWrite(GPIO_PORTA_BASE,GPIO_PIN_3, GPIO_PIN_3);
+}
+void ili9341_cmd_mode(void){
+    MAP_GPIOPinWrite(GPIO_PORTM_BASE, GPIO_PIN_1, 0x00);
+}
+void ili9341_data_mode(void){
+    MAP_GPIOPinWrite(GPIO_PORTM_BASE,GPIO_PIN_1, GPIO_PIN_1);
+}
+
 void ili9341_reset(void){
     // PM0 to low for reset.
     MAP_GPIOPinWrite(GPIO_PORTM_BASE, GPIO_PIN_0, 0x00);
     MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
-    // PM0 pin to high 
+    // PM0 high
     MAP_GPIOPinWrite(GPIO_PORTM_BASE, GPIO_PIN_0, GPIO_PIN_0);
-    SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
+    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
 }
 
 void ili9341_send_command(uint8_t cmd){
-    // PM1 and PA3 to low (Enable the Display and put it in command mode)
-    MAP_GPIOPinWrite(GPIO_PORTM_BASE, GPIO_PIN_1, 0x00);
-    MAP_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_3 , 0x00);
+    ili9341_enable();
+    ili9341_cmd_mode();
     // Send the command trough SPI1
     MAP_SSIDataPut(SSI0_BASE, cmd);
     // Wait for data to be tansfered
     while(MAP_SSIBusy(SSI0_BASE));
-    // PA3 high to disabble the display
-    MAP_GPIOPinWrite(GPIO_PORTA_BASE,GPIO_PIN_3, GPIO_PIN_3);
+    ili9341_disable();
 }
 
 void ili9341_send_data(uint8_t data){
-    // PA3 low to enable the Display and PM1 high to data mode
-    MAP_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_3 , 0x00);
-    MAP_GPIOPinWrite(GPIO_PORTM_BASE,GPIO_PIN_1, GPIO_PIN_1);
+    ili9341_enable();
+    ili9341_data_mode();
     // Send the data to the SPI0
     MAP_SSIDataPut(SSI0_BASE, data);
     // Wait for data to be tansfered
     while(MAP_SSIBusy(SSI0_BASE));
-    // PA3 high to disabble the display
-    MAP_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_3, GPIO_PIN_3);
+    ili9341_disable();
 }
 
 void ili9341_init(void){ 
+    ili9341_enable();
     ili9341_reset();
     // Change to 8bit len to send commands
     spi0_data_len(8);
     ili9341_send_command(0x01); // Software reset
-    MAP_SysCtlDelay(systemClkFreq/30);
+    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
     ili9341_send_command(0x11); // Sleep out
-    MAP_SysCtlDelay(systemClkFreq/30);
+    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
     ili9341_send_command(0x3A); // Pixel Format
     ili9341_send_data(0x55); // RGB565
     ili9341_send_command(0x36); // MADCTL
     ili9341_send_data(0xC0); // RGB, 180 degrees rotation
     ili9341_send_command(0x29);
+    ili9341_disable();
     // Change to 16 bit len for send pixels data
     spi0_data_len(16);
-    MAP_SysCtlDelay(systemClkFreq/30);
+    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
 }
 
 void ili9341_set_window(uint16_t x0, uint16_t y0,uint16_t x1, uint16_t y1){
-    // Config spi3 to send command and data configuration
+    // Config spi0 to send command and data configuration
     spi0_data_len(8);
     // Column Address Set (CASET)
     ili9341_send_command(0x2A);
@@ -210,9 +221,8 @@ void ili9341_fill_screen(uint16_t color){
         colorBuffer[i] = color;
     // Set full window
     ili9341_set_window(0, 0,ILI9341_WIDTH - 1,ILI9341_HEIGHT - 1);
-    // PA3 low to enable the Display and PM1 high to data mode
-    MAP_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_3 , 0x00);
-    MAP_GPIOPinWrite(GPIO_PORTM_BASE,GPIO_PIN_1, GPIO_PIN_1);
+    ili9341_enable();
+    ili9341_data_mode();
     // Stream lines using uDMA
     for(i = 0; i < ILI9341_HEIGHT;)
         if(!MAP_uDMAChannelSizeGet(UDMA_CH11_SSI0TX | UDMA_PRI_SELECT) && !SSIBusy(SSI0_BASE)){    
@@ -242,10 +252,10 @@ void ili9341_draw_char(uint16_t x, uint16_t y,char c,uint16_t fg, uint16_t bg){
                 charBuffer[idx++] = bg;
         }
     }
-    // 2. Seleccionar ventana
+    // 2. Set window
     ili9341_set_window(x, y,x + FONT_WIDTH  - 1,y + FONT_HEIGHT - 1);
-    // PA3 low to enable the Display and PM1 high to data mode
-    MAP_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_3 , 0x00);
+    ili9341_enable();
+    ili9341_data_mode();
     MAP_GPIOPinWrite(GPIO_PORTM_BASE,GPIO_PIN_1, GPIO_PIN_1);
     // 4. Enviar buffer por uDMA
     uDMA_spi0_send_buffer(charBuffer,FONT_WIDTH * FONT_HEIGHT);
@@ -305,13 +315,13 @@ void spi0_config(void){
     // Config QSSI1 module, master mode, 16bits len.
     MAP_SSIDisable(SSI0_BASE);
     SSIClockSourceSet(SSI0_BASE, SSI_CLOCK_SYSTEM);
-    MAP_SSIConfigSetExpClk(SSI0_BASE, systemClkFreq, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,50000000, 16);
+    MAP_SSIConfigSetExpClk(SSI0_BASE, systemClkFreq, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,30000000, 16);
     MAP_SSIEnable(SSI0_BASE);
 }
 
 void spi0_data_len(uint32_t len){
     MAP_SSIDisable(SSI0_BASE);
-    MAP_SSIConfigSetExpClk(SSI0_BASE, systemClkFreq, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,50000000, len);
+    MAP_SSIConfigSetExpClk(SSI0_BASE, systemClkFreq, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,30000000, len);
     MAP_SSIEnable(SSI0_BASE);
 }
 
@@ -335,7 +345,7 @@ void uDMA_spi0_config(void){
         UDMA_SIZE_16 |        // 16-bit data
         UDMA_SRC_INC_16 |     // increment source
         UDMA_DST_INC_NONE |   // SSI FIFO
-        UDMA_ARB_8);          // burst of 8 words
+        UDMA_ARB_1);          // burst of 8 words
     // Enable uDMA ints
 }
 
