@@ -59,6 +59,30 @@ EK-TM4C123GXL/Proyectos/timer/.settings/org.eclipse.core.resources.prefs
 
 /workspace/
 
+/TM4C123GH6PM_develop/Debug
+TM4C123GH6PM_develop/targetConfigs/
+TM4C123GH6PM_develop/.ccsproject
+TM4C123GH6PM_develop/.clangd
+TM4C123GH6PM_develop/.cproject
+TM4C123GH6PM_develop/.settings/org
+TM4C123GH6PM_develop/.settings/org.eclipse.cdt.codan.core.prefs
+TM4C123GH6PM_develop/macros.ini_initial
+TM4C123GH6PM_develop/target_config.ccxml
+TM4C123GH6PM_develop/.settings/org.eclipse.core.resources.prefs
+TM4C123GH6PM_develop/.project
+
+TM4C1294NCPDT_develop/Debug
+TM4C1294NCPDT_develop/targetConfigs/
+TM4C1294NCPDT_develop/.ccsproject
+TM4C1294NCPDT_develop/.clangd
+TM4C1294NCPDT_develop/.cproject
+TM4C1294NCPDT_develop/.settings/org
+TM4C1294NCPDT_develop/.settings/org.eclipse.cdt.codan.core.prefs
+TM4C1294NCPDT_develop/macros.ini_initial
+TM4C1294NCPDT_develop/target_config.ccxml
+TM4C1294NCPDT_develop/.settings/org.eclipse.core.resources.prefs
+TM4C1294NCPDT_develop/.project
+
 2.4DisplayHat/Debug/
 2.4DisplayHat/targetConfigs/
 2.4DisplayHat/.ccsproject
@@ -70,4 +94,3 @@ EK-TM4C123GXL/Proyectos/timer/.settings/org.eclipse.core.resources.prefs
 2.4DisplayHat/target_config.ccxml
 2.4DisplayHat/.settings/org.eclipse.core.resources.prefs
 .theia/launch.json
-2.4DisplayHat/main.cmd
