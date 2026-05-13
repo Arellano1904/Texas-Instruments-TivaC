@@ -1,4 +1,14 @@
 // C file to handle a 1.8_st7735_spi_display
+/* Pin Connections  
+Display ----- EK-TM4C123GXL
+  Vcc         3.3v
+  GND         GND
+  CS          PD1
+  RESET       PB5
+  A0(DC)      PD2
+  SDA         PD3
+  SCK         PD0
+*/ 
 //*****************************************************************************
 // Libraries
 //*****************************************************************************
