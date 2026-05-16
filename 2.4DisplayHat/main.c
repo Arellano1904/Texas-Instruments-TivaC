@@ -65,10 +65,6 @@ int main(void){
     buttons_config();
     // Leds //
     leds_config();
-    // Spi1 //
-    spi0_config();
-    // uDMA //
-    uDMA_spi0_config();
     // Global ints enabling //
     MAP_IntMasterEnable();
     // Init display //

@@ -1,5 +1,5 @@
 //*****************************************************************************
-// 2.4_tft_display, ILI9341_driver, tm4c1294_spi0_uDMA
+// 2.4_tft_display, ILI9341_driver, tm4c1294_spi2_uDMA
 //*****************************************************************************
 // ili9341DisplayDriver
 #include "ili9341_tm4c1294.h"
@@ -134,24 +134,24 @@ static uint16_t charBuffer[FONT_WIDTH * FONT_HEIGHT];
 
 // DISPLAY //
 void ili9341_enable(void){
-    MAP_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_3 , 0x00);
+    MAP_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_0 , 0x00);
 }
 void ili9341_disable(void){
-    MAP_GPIOPinWrite(GPIO_PORTA_BASE,GPIO_PIN_3, GPIO_PIN_3);
+    MAP_GPIOPinWrite(GPIO_PORTE_BASE,GPIO_PIN_0, GPIO_PIN_0);
 }
 void ili9341_cmd_mode(void){
-    MAP_GPIOPinWrite(GPIO_PORTM_BASE, GPIO_PIN_1, 0x00);
+    MAP_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_1, 0x00);
 }
 void ili9341_data_mode(void){
-    MAP_GPIOPinWrite(GPIO_PORTM_BASE,GPIO_PIN_1, GPIO_PIN_1);
+    MAP_GPIOPinWrite(GPIO_PORTE_BASE,GPIO_PIN_1, GPIO_PIN_1);
 }
 
 void ili9341_reset(void){
-    // PM0 to low for reset.
-    MAP_GPIOPinWrite(GPIO_PORTM_BASE, GPIO_PIN_0, 0x00);
+    // PE2 to low for reset.
+    MAP_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_2, 0x00);
     MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
-    // PM0 high
-    MAP_GPIOPinWrite(GPIO_PORTM_BASE, GPIO_PIN_0, GPIO_PIN_0);
+    // PE2 high
+    MAP_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_2, GPIO_PIN_2);
     MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
 }
 
@@ -159,27 +159,31 @@ void ili9341_send_command(uint8_t cmd){
     ili9341_enable();
     ili9341_cmd_mode();
     // Send the command trough SPI1
-    MAP_SSIDataPut(SSI0_BASE, cmd);
+    MAP_SSIDataPut(SSI2_BASE, cmd);
     // Wait for data to be tansfered
-    while(MAP_SSIBusy(SSI0_BASE));
+    while(MAP_SSIBusy(SSI2_BASE));
     ili9341_disable();
 }
 
 void ili9341_send_data(uint8_t data){
     ili9341_enable();
     ili9341_data_mode();
-    // Send the data to the SPI0
-    MAP_SSIDataPut(SSI0_BASE, data);
+    // Send the data to the spi2
+    MAP_SSIDataPut(SSI2_BASE, data);
     // Wait for data to be tansfered
-    while(MAP_SSIBusy(SSI0_BASE));
+    while(MAP_SSIBusy(SSI2_BASE));
     ili9341_disable();
 }
 
 void ili9341_init(void){ 
+    // Spi2 //
+    spi2_config();
+    // uDMA //
+    uDMA_spi2_config();
     ili9341_enable();
     ili9341_reset();
     // Change to 8bit len to send commands
-    spi0_data_len(8);
+    spi2_data_len(8);
     ili9341_send_command(0x01); // Software reset
     MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
     ili9341_send_command(0x11); // Sleep out
@@ -191,13 +195,13 @@ void ili9341_init(void){
     ili9341_send_command(0x29);
     ili9341_disable();
     // Change to 16 bit len for send pixels data
-    spi0_data_len(16);
+    spi2_data_len(16);
     MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
 }
 
 void ili9341_set_window(uint16_t x0, uint16_t y0,uint16_t x1, uint16_t y1){
-    // Config spi0 to send command and data configuration
-    spi0_data_len(8);
+    // Config spi2 to send command and data configuration
+    spi2_data_len(8);
     // Column Address Set (CASET)
     ili9341_send_command(0x2A);
     ili9341_send_data(x0 >> 8);     // X start high
@@ -215,7 +219,7 @@ void ili9341_set_window(uint16_t x0, uint16_t y0,uint16_t x1, uint16_t y1){
     // Write to RAM
     ili9341_send_command(0x2C);
     // Config spi3 to send pixels data
-    spi0_data_len(16);
+    spi2_data_len(16);
     
 }
 
@@ -240,13 +244,13 @@ void ili9341_fill_screen(uint16_t color)
          * The next DMA burst starts feeding the FIFO as soon as it has room,
          * with zero dead time on the SPI bus.
          */
-        while (MAP_uDMAChannelSizeGet(UDMA_CH11_SSI0TX | UDMA_PRI_SELECT)) { }
+        while (MAP_uDMAChannelSizeGet(UDMA_CH13_SSI2TX | UDMA_PRI_SELECT)) { }
 
-        uDMA_spi0_send_buffer(pingpong[i & 1], PIXELS_PER_BUFFER);
+        uDMA_spi2_send_buffer(pingpong[i & 1], PIXELS_PER_BUFFER);
     }
 
     /* Wait for the shift register to drain only once, at the very end */
-    while (SSIBusy(SSI0_BASE)) { }
+    while (SSIBusy(SSI2_BASE)) { }
 }
 
 void ili9341_draw_char(uint16_t x, uint16_t y,char c,uint16_t fg, uint16_t bg){
@@ -274,9 +278,9 @@ void ili9341_draw_char(uint16_t x, uint16_t y,char c,uint16_t fg, uint16_t bg){
     ili9341_set_window(x, y,x + FONT_WIDTH  - 1,y + FONT_HEIGHT - 1);
     ili9341_enable();
     ili9341_data_mode();
-    MAP_GPIOPinWrite(GPIO_PORTM_BASE,GPIO_PIN_1, GPIO_PIN_1);
+    ili9341_enable();
     // 4. Enviar buffer por uDMA
-    uDMA_spi0_send_buffer(charBuffer,FONT_WIDTH * FONT_HEIGHT);
+    uDMA_spi2_send_buffer(charBuffer,FONT_WIDTH * FONT_HEIGHT);
 }
 
 void ili9341_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fg,uint16_t bg){
@@ -289,7 +293,7 @@ void ili9341_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fg,uin
             cx = x;
             cy += FONT_HEIGHT;
         }else{
-            if(!MAP_uDMAChannelSizeGet(UDMA_CH11_SSI0TX | UDMA_PRI_SELECT) && !SSIBusy(SSI0_BASE)){  
+            if(!MAP_uDMAChannelSizeGet(UDMA_CH13_SSI2TX | UDMA_PRI_SELECT) && !SSIBusy(SSI2_BASE)){  
                 ili9341_draw_char(cx, cy, *str, fg, bg);
                 cx += FONT_WIDTH;
                 str++;
@@ -310,41 +314,41 @@ void ili9341_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint
     ili9341_print_string(x,y,buf,color,bg);
 }
 
-// SPI0 for display //
-void spi0_config(void){
-    // Enabling and wait for QSSI module and ports A and M to be ready
-    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI0);
-    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_SSI0));
-    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
-    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOA));
-    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOM);
-    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOM));
-    // Configure pins for QSSI0
-    // {PA2:Clk,PA3:CS,PA4:TX,PA5:RX,PK3:rst,PK2:C/D}
-    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTA_BASE,GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4);
-    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTM_BASE,GPIO_PIN_0 | GPIO_PIN_1);
-    MAP_GPIOPinTypeGPIOInput(GPIO_PORTA_BASE,GPIO_PIN_5);
-    MAP_GPIOPinConfigure(GPIO_PA2_SSI0CLK);
-    MAP_GPIOPinConfigure(GPIO_PA4_SSI0XDAT0);
-    MAP_GPIOPinConfigure(GPIO_PA5_SSI0XDAT1);
-    MAP_GPIOPinTypeSSI(GPIO_PORTA_BASE, GPIO_PIN_2 | GPIO_PIN_4 | GPIO_PIN_5 );
-    // Pin PA3 HIGH to dissable the display.
-    MAP_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_3, GPIO_PIN_3);
+// SPI2 for display //
+void spi2_config(void){
+    // Enabling and wait for QSSI module and ports D and E to be ready
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI2);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_SSI2));
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOD);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOD));
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOE));
+    // Configure pins for QSSI2
+    // {PD3:Clk,PE0:CS,PPD1:TX,PPD0:RX,PE2:rst,PE1:C/D}
+    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTD_BASE,GPIO_PIN_1 | GPIO_PIN_3);
+    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTE_BASE,GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2);
+    MAP_GPIOPinTypeGPIOInput(GPIO_PORTD_BASE,GPIO_PIN_0);
+    MAP_GPIOPinTypeGPIOInput(GPIO_PORTE_BASE,GPIO_PIN_3);
+    MAP_GPIOPinConfigure(GPIO_PD3_SSI2CLK);
+    MAP_GPIOPinConfigure(GPIO_PD1_SSI2XDAT0);
+    MAP_GPIOPinConfigure(GPIO_PD0_SSI2XDAT1);
+    MAP_GPIOPinTypeSSI(GPIO_PORTD_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_3 );
+    ili9341_enable();
     // Config QSSI1 module, master mode, 16bits len.
-    MAP_SSIDisable(SSI0_BASE);
-    SSIClockSourceSet(SSI0_BASE, SSI_CLOCK_SYSTEM);
-    MAP_SSIConfigSetExpClk(SSI0_BASE, systemClkFreq, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,30000000, 16);
-    MAP_SSIEnable(SSI0_BASE);
+    MAP_SSIDisable(SSI2_BASE);
+    SSIClockSourceSet(SSI2_BASE, SSI_CLOCK_SYSTEM);
+    MAP_SSIConfigSetExpClk(SSI2_BASE, systemClkFreq, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,30000000, 16);
+    MAP_SSIEnable(SSI2_BASE);
 }
 
-void spi0_data_len(uint32_t len){
-    MAP_SSIDisable(SSI0_BASE);
-    MAP_SSIConfigSetExpClk(SSI0_BASE, systemClkFreq, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,30000000, len);
-    MAP_SSIEnable(SSI0_BASE);
+void spi2_data_len(uint32_t len){
+    MAP_SSIDisable(SSI2_BASE);
+    MAP_SSIConfigSetExpClk(SSI2_BASE, systemClkFreq, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,30000000, len);
+    MAP_SSIEnable(SSI2_BASE);
 }
 
 // uDMA //
-void uDMA_spi0_config(void){
+void uDMA_spi2_config(void){
     // Enable uDMA peripheral
     MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_UDMA);
     while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_UDMA));
@@ -353,13 +357,13 @@ void uDMA_spi0_config(void){
     // Set base address of control table
     MAP_uDMAControlBaseSet(uDMAControlTable);
     // Enable uDMA on SSI1 TX
-    MAP_SSIDMAEnable(SSI0_BASE, SSI_DMA_TX);
+    MAP_SSIDMAEnable(SSI2_BASE, SSI_DMA_TX);
     // Optional but safe
-    MAP_uDMAChannelAssign(UDMA_CH11_SSI0TX);
+    MAP_uDMAChannelAssign(UDMA_CH13_SSI2TX);
     // Disable channel before configuration
-    MAP_uDMAChannelDisable(UDMA_CH11_SSI0TX);
+    MAP_uDMAChannelDisable(UDMA_CH13_SSI2TX);
     // Configure channel
-    MAP_uDMAChannelControlSet(UDMA_CH11_SSI0TX | UDMA_PRI_SELECT,
+    MAP_uDMAChannelControlSet(UDMA_CH13_SSI2TX | UDMA_PRI_SELECT,
         UDMA_SIZE_16 |        // 16-bit data
         UDMA_SRC_INC_16 |     // increment source
         UDMA_DST_INC_NONE |   // SSI FIFO
@@ -367,19 +371,19 @@ void uDMA_spi0_config(void){
     // Enable uDMA ints
 }
 
-void uDMA_spi0_send_buffer(uint16_t* dataBuffer, uint32_t bufferLen){
+void uDMA_spi2_send_buffer(uint16_t* dataBuffer, uint32_t bufferLen){
     // Disable channel before setup
-    MAP_uDMAChannelDisable(UDMA_CH11_SSI0TX);
+    MAP_uDMAChannelDisable(UDMA_CH13_SSI2TX);
     // Configure transfer
     MAP_uDMAChannelTransferSet(
-        UDMA_CH11_SSI0TX | UDMA_PRI_SELECT,
+        UDMA_CH13_SSI2TX | UDMA_PRI_SELECT,
         UDMA_MODE_BASIC,
         dataBuffer,
-        (void *)(SSI0_BASE + SSI_O_DR),
+        (void *)(SSI2_BASE + SSI_O_DR),
         bufferLen
     );
     // Start transfer
-    MAP_uDMAChannelEnable(UDMA_CH11_SSI0TX);
+    MAP_uDMAChannelEnable(UDMA_CH13_SSI2TX);
 }
 
 static inline void fill_buf_u32(uint16_t *buf, uint16_t color, uint32_t pixels){
