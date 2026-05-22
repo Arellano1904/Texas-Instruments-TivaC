@@ -70,18 +70,18 @@ int main(void){
     // Init display //
     ili9341_init();
     ili9341_fill_screen(BLACK);
-    ili9341_print_string(0, 0, "TivaC : TM4C1294NCPDT", RED, BLACK);
-    ili9341_print_string(0, 16, "2.4inch SPI Display : ILI9341", RED, BLACK);
-
+    ili9341_print_string(0, 0, "TivaC: EK-TM4C1294XL", RED, BLACK);
+    ili9341_print_string(0, 16, "2.4SpiDisplay : ILI9341", RED, BLACK);
     //***** Loop Forever *****//
     while(1){
         if(sw1State){ // SW1 pressed
             sw1State = 0x0;
-            ili9341_fill_screen(RED);
+            ili9341_print_int(0, 32, 1904, RED, BLACK);
         }
         if(sw2State){// SW2 pressed
             sw2State = 0x00;
-            ili9341_fill_screen(BLUE);
+            ili9341_print_float(0, 48, 19.04f,2, RED, BLACK);
+            
         }
     }
 }

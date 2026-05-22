@@ -122,16 +122,8 @@ static const unsigned char font8x16[][16] = {
 // For uDMA use 
 #pragma DATA_ALIGN(uDMAControlTable, 1024);
 uint8_t uDMAControlTable[1024];
-#define LINES_PER_BUFFER    4                                        /* DO NOT exceed 4 for 240-wide panels */
-#define PIXELS_PER_BUFFER   (ILI9341_WIDTH * LINES_PER_BUFFER)      /* 960  — fits uDMA 1024 limit         */
-#define TOTAL_TRANSFERS     (ILI9341_HEIGHT / LINES_PER_BUFFER)     /* 80 */
-#pragma DATA_ALIGN(colorBufA, 4)
-static uint16_t colorBufA[PIXELS_PER_BUFFER];
-#pragma DATA_ALIGN(colorBufB, 4)
-static uint16_t colorBufB[PIXELS_PER_BUFFER];
-static uint16_t charBuffer[FONT_WIDTH * FONT_HEIGHT];
-
-
+static uint16_t colorBufer[ILI9341_WIDTH * ILI9341_LINES_PER_BUFFER];
+static uint16_t g_ui16CharBuf[FONT_WIDTH * FONT_HEIGHT];
 // DISPLAY //
 void ili9341_enable(void){
     MAP_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_0 , 0x00);
@@ -223,82 +215,126 @@ void ili9341_set_window(uint16_t x0, uint16_t y0,uint16_t x1, uint16_t y1){
     
 }
 
-void ili9341_fill_screen(uint16_t color)
-{
-    uint32_t  i;
-    uint16_t *pingpong[2] = { colorBufA, colorBufB };
-
-    /* Init both buffers once (they share the same colour for a plain fill) */
-    fill_buf_u32(colorBufA, color, PIXELS_PER_BUFFER);
-    fill_buf_u32(colorBufB, color, PIXELS_PER_BUFFER);
-
+void ili9341_fill_screen(uint16_t color){
+    uint16_t  i;
+    // Fill a chunk color buffer
+    for(i=0;i<ILI9341_WIDTH*ILI9341_LINES_PER_BUFFER;i++)
+        colorBufer[i] = color;
+    
     ili9341_set_window(0, 0, ILI9341_WIDTH - 1, ILI9341_HEIGHT - 1);
     ili9341_enable();
     ili9341_data_mode();
 
-    for (i = 0; i < TOTAL_TRANSFERS; i++)
-    {
+    for (i = 0; i < (ILI9341_HEIGHT/ILI9341_LINES_PER_BUFFER); i++){
         /*
          * Wait only for DMA done — NOT for SSIBusy.
          * The FIFO keeps clocking bits out in the background while we poll.
          * The next DMA burst starts feeding the FIFO as soon as it has room,
          * with zero dead time on the SPI bus.
          */
-        while (MAP_uDMAChannelSizeGet(UDMA_CH13_SSI2TX | UDMA_PRI_SELECT)) { }
+        while (MAP_uDMAChannelSizeGet(UDMA_CH13_SSI2TX | UDMA_PRI_SELECT));
 
-        uDMA_spi2_send_buffer(pingpong[i & 1], PIXELS_PER_BUFFER);
+        uDMA_spi2_send_buffer(colorBufer, ILI9341_WIDTH * ILI9341_LINES_PER_BUFFER);
     }
 
     /* Wait for the shift register to drain only once, at the very end */
-    while (SSIBusy(SSI2_BASE)) { }
+    while (SSIBusy(SSI2_BASE));
 }
 
-void ili9341_draw_char(uint16_t x, uint16_t y,char c,uint16_t fg, uint16_t bg){
+void ili9341_draw_char(uint16_t x, uint16_t y,char ch,uint16_t fgColor, uint16_t bgColor){
     // Usefull variables to fill the buffer
-    uint8_t row, col;
-    uint8_t line;
-    uint32_t idx = 0;
+    uint8_t   row, col;
+    uint8_t   fontIdx;
+    uint8_t   fontByte;
+    uint16_t *pPix = g_ui16CharBuf;
 
-    if (c < 0x20 || c > 0x7F)
-    c = '?';
-    // 1. Preparar buffer del carácter
-    for(row = 0; row < FONT_HEIGHT; row++)
+    // ── Bounds check ─────────────────────────────────────────────────────────
+    // A character starting at x=236 would write pixels 236..243,
+    // but the screen only goes to 239 → corrupts ILI9341 address counter.
+    if (x + FONT_WIDTH > ILI9341_WIDTH)  return;
+    if (y + FONT_HEIGHT > ILI9341_HEIGHT) return;
+
+    // ── ASCII → font table index ─────────────────────────────────────────────
+    // Your table starts at 0x20 (space), so:
+    //   ' '  → index 0
+    //   '!'  → index 1
+    //   'A'  → index 33   (0x41 - 0x20)
+    if (ch < (char)FONT_FIRST_CHAR || ch > (char)FONT_LAST_CHAR)
+        ch = (char)FONT_FALLBACK;
+    fontIdx = (uint8_t)((uint8_t)ch - FONT_FIRST_CHAR);
+
+    // ── Expand bitmap → RGB565 pixels ─────────────────────────────────────────
+    // Outer loop: rows top → bottom (row 0 = topmost screen row of glyph)
+    // Inner loop: columns left → right
+    // Memory layout in g_ui16CharBuf:
+    //   [0..7]   = row 0  (top row of glyph,   8 pixels)
+    //   [8..15]  = row 1
+    //   ...
+    //   [120..127] = row 15 (bottom row of glyph)
+    // This is exactly the order ILI9341 expects after RAMWR
+    // because we set a top-to-bottom window.
+    for (row = 0; row < FONT_HEIGHT; row++)
     {
-        line = font8x16[c - FONT_FIRST_CHAR][row];
+        fontByte = font8x16[fontIdx][row];
 
-        for(col = 0; col < FONT_WIDTH; col++)
+        for (col = 0; col < FONT_WIDTH; col++)
         {
-            if(line & (0x80 >> col))
-                charBuffer[idx++] = fg;
-            else
-                charBuffer[idx++] = bg;
+            // Shift mask from MSB down: col0→bit7, col1→bit6 ... col7→bit0
+            *pPix++ = (fontByte & (0x80u >> col)) ? fgColor : bgColor;
         }
     }
-    // 2. Set window
-    ili9341_set_window(x, y,x + FONT_WIDTH  - 1,y + FONT_HEIGHT - 1);
-    ili9341_enable();
-    ili9341_data_mode();
-    ili9341_enable();
-    // 4. Enviar buffer por uDMA
-    uDMA_spi2_send_buffer(charBuffer,FONT_WIDTH * FONT_HEIGHT);
+
+    // ── Set 8×16 window, fire DMA ─────────────────────────────────────────────
+    // Window = exactly the character bounding box.
+    // ILI9341 will auto-advance within this window — no address math needed.
+    ili9341_set_window(x,y,x + FONT_WIDTH - 1, y + FONT_HEIGHT - 1);
+
+    ili9341_enable();      // CS low
+    ili9341_data_mode();   // DC high — pixel stream
+
+    // Kick off DMA: 128 pixels × 16-bit = 256 bytes
+    uDMA_spi2_send_buffer(g_ui16CharBuf, FONT_WIDTH * FONT_HEIGHT);
+
+    // Must wait for BOTH DMA done AND shift register empty before
+    // the next ili9341_set_window() call. set_window sends SPI commands
+    // and if SSI is still shifting pixels you corrupt the pixel stream.
+    while (MAP_uDMAChannelSizeGet(UDMA_CH13_SSI2TX | UDMA_PRI_SELECT));
+    while (SSIBusy(SSI2_BASE));
+
+    ili9341_disable();     // CS high
+    
 }
 
-void ili9341_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fg,uint16_t bg){
-    uint16_t cx = x;
-    uint16_t cy = y;
+void ili9341_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fgColor,uint16_t bgColor){
+    uint16_t curX = x;
+    uint16_t curY = y;
 
-    while(*str)
+    while (*str != '\0')
     {
-        if(*str == '\n'){
-            cx = x;
-            cy += FONT_HEIGHT;
-        }else{
-            if(!MAP_uDMAChannelSizeGet(UDMA_CH13_SSI2TX | UDMA_PRI_SELECT) && !SSIBusy(SSI2_BASE)){  
-                ili9341_draw_char(cx, cy, *str, fg, bg);
-                cx += FONT_WIDTH;
-                str++;
-            }
+        char ch = *str++;
+
+        // ── Newline ───────────────────────────────────────────────────────────
+        if (ch == '\n')
+        {
+            curX  = x;          // Return to left margin (not column 0 — respects x)
+            curY += FONT_HEIGHT;     // Drop one text row (16 pixels)
+            if (curY + FONT_HEIGHT > ILI9341_HEIGHT) return;   // Off bottom → stop
+            continue;
         }
+
+        if (ch == '\r') continue;   // Ignore bare carriage return
+
+        // ── Auto word-wrap ───────────────────────────────────────────────────
+        // Don't let a character start where it would run past the right edge
+        if (curX + FONT_WIDTH > ILI9341_WIDTH)
+        {
+            curX  = x;
+            curY += FONT_HEIGHT;
+            if (curY + FONT_HEIGHT > ILI9341_HEIGHT) return;
+        }
+
+        ili9341_draw_char(curX, curY, ch, fgColor, bgColor);
+        curX += FONT_WIDTH;    // Advance cursor one glyph width
     }
 } 
 
@@ -386,16 +422,8 @@ void uDMA_spi2_send_buffer(uint16_t* dataBuffer, uint32_t bufferLen){
     MAP_uDMAChannelEnable(UDMA_CH13_SSI2TX);
 }
 
-static inline void fill_buf_u32(uint16_t *buf, uint16_t color, uint32_t pixels){
-    uint32_t  word  = ((uint32_t)color << 16) | color;  /* 2 pixels packed */
-    uint32_t *wp    = (uint32_t *)buf;
-    uint32_t  i;
-    for (i = 0; i < pixels / 2; i++) wp[i] = word;
-    if (pixels & 1) buf[pixels - 1] = color;            /* handle odd tail  */
-}
-
 // Funciones de apoyo
-static void intToStr(int32_t value, char *buf){
+void intToStr(int32_t value, char *buf){
     char tmp[12];
     int i = 0, j = 0;
 
@@ -424,7 +452,7 @@ static void intToStr(int32_t value, char *buf){
     buf[j] = '\0';
 }
 
-static void floatToStr(float value, char *buf, uint8_t decimals){
+void floatToStr(float value, char *buf, uint8_t decimals){
     int32_t intPart;
     float frac;
     int i = 0,j = 0;

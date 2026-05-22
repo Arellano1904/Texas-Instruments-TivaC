@@ -30,10 +30,13 @@
 
 #define ILI9341_WIDTH   240
 #define ILI9341_HEIGHT  320
+#define ILI9341_LINES_PER_BUFFER 4
+#define ILI9341_CHUNKS_PER_FULL_SCREEN 80
 #define FONT_WIDTH   8
 #define FONT_HEIGHT 16
 #define FONT_FIRST_CHAR 0x20
 #define FONT_LAST_CHAR 0x7E
+#define FONT_FALLBACK    '?'
 
 // ClockFreq variable
 extern volatile uint32_t systemClkFreq;
@@ -56,7 +59,6 @@ void ili9341_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint
 // uDMA //
 void uDMA_spi2_config(void);
 void uDMA_spi2_send_buffer(uint16_t* dataBuffer, uint32_t bufferLen);
-static inline void fill_buf_u32(uint16_t *buf, uint16_t color, uint32_t pixels);
 // spi2 FOR DISPLAY //
 void spi2_config(void);
 void spi2_data_len(uint32_t len);
