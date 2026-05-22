@@ -130,7 +130,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // ADC1 Sequence 0
     IntDefaultHandler,                      // ADC1 Sequence 1
     IntDefaultHandler,                      // ADC1 Sequence 2
-    ADC1Seq3_Handler,                           // ADC1 Sequence 3
+    IntDefaultHandler,                       // ADC1 Sequence 3
     IntDefaultHandler,                      // External Bus Interface 0
     IntDefaultHandler,                      // GPIO Port J
     IntDefaultHandler,                      // GPIO Port K
