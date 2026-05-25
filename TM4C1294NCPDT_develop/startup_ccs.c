@@ -37,7 +37,7 @@ static void FaultISR(void);
 static void IntDefaultHandler(void);
 
 /* ── Application handler — defined in main.c ────────────────────────────────── */
-extern void ADC1Seq3_Handler(void);
+extern void adc0ssq3_handler(void);
 
 //*****************************************************************************
 //
@@ -98,7 +98,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // ADC Sequence 0
     IntDefaultHandler,                      // ADC Sequence 1
     IntDefaultHandler,                      // ADC Sequence 2
-    IntDefaultHandler,                      // ADC Sequence 3
+    adc0ssq3_handler,                           // ADC Sequence 3
     IntDefaultHandler,                      // Watchdog timer
     IntDefaultHandler,                      // Timer 0 subtimer A
     IntDefaultHandler,                      // Timer 0 subtimer B
