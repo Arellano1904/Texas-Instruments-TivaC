@@ -21,7 +21,6 @@
 #include "driverlib/interrupt.h"
 #include "driverlib/timer.h"
 #include "driverlib/pwm.h"
-#include "driverlib/timer.h"
 #include "driverlib/adc.h"
 // Own driver libraries.
 #include "drivers/ili9341_tm4c1294.h"
@@ -77,6 +76,7 @@ int main(void){
     ili9341_print_string(0, 0, "TivaC: EK-TM4C1294XL", RED, BLACK);
     ili9341_print_string(0, 16, "2.4SpiDisplay:ILI9341-240x320", RED, BLACK);
     ili9341_print_string(0, 32, "Voltaje: ", BLUE,BLACK);
+    ili9341_print_string(104, 32, "DutyC:", CYAN,BLACK);
     
     // ADC config function
     adc0ssq3_config();
@@ -89,9 +89,10 @@ int main(void){
     // Loop Forever
     while(1){
         if(adc_ready){
-        adc_ready == 0x00;
+        adc_ready = 0x00;
         adcValue = ((float)adc0Ssq3Value * ADC_SCALE);
         ili9341_print_float(65, 32, adcValue, 2, BLUE, BLACK);
+        ili9341_print_float(153, 32, fDutyCycle, 2, CYAN, BLACK);
         }
     }
 }
@@ -122,28 +123,44 @@ void adc0ssq3_config(void){
     while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOE));
     // Disable digital function on the pin
     MAP_GPIOPinTypeADC(GPIO_PORTE_BASE, GPIO_PIN_3);
+    // Config ADC clock
+    ADCClockConfigSet(ADC0_BASE,ADC_CLOCK_SRC_PLL | ADC_CLOCK_RATE_FULL,12);
+    // Use VDDA (3.3 V)
+    MAP_ADCReferenceSet(ADC0_BASE, ADC_REF_INT);
+    // Configure ADC oversampling
+    MAP_ADCHardwareOversampleConfigure(ADC0_BASE, 0);
     // Disable sequencer 3 during config
     MAP_ADCSequenceDisable(ADC0_BASE, 3);
     // Enable the first sample sequencer to capture the value of channel 0 when the processor trigger occurs
-    MAP_ADCSequenceConfigure(ADC0_BASE, 3, ADC_TRIGGER_TIMER, 0);
-    // Usa VDDA (3.3 V)
-    MAP_ADCReferenceSet(ADC0_BASE, ADC_REF_INT);
-    // Enable ADC0 Sequencer 3 interrupt    
-    MAP_ADCIntEnable(ADC0_BASE, 3);
+    MAP_ADCSequenceConfigure(ADC0_BASE, 3, ADC_TRIGGER_PWM_MOD0 | ADC_TRIGGER_PWM1, 0);
+    // Configure sequencer steps
+    MAP_ADCSequenceStepConfigure(ADC0_BASE, 3, 0,ADC_CTL_IE | ADC_CTL_END | ADC_CTL_CH0);
     // Clear ADC0 Sequencer 3 interrupt
     MAP_ADCIntClear(ADC0_BASE, 3);
+    // Enable ADC0 Sequencer 3 interrupt    
+    MAP_ADCIntEnable(ADC0_BASE, 3);
     // Enable interrupt in NVIC
     MAP_IntEnable(INT_ADC0SS3);
-    MAP_ADCSequenceStepConfigure(ADC0_BASE, 3, 0,ADC_CTL_IE | ADC_CTL_END | ADC_CTL_CH0);
+    // Enable ADC sequencer
     MAP_ADCSequenceEnable(ADC0_BASE, 3);
 
 }
-// ADC0 Sequencer 3 interruptio handler
+// ADC0 Sequencer 3 interrupt handler
 void adc0ssq3_handler(void){
     // ALWAYS clear first, before reading
-    MAP_ADCIntClear(ADC0_BASE, 3);     
-    adc_ready = 0x01;
+    MAP_ADCIntClear(ADC0_BASE, 3);
+    // Read ADC result
     MAP_ADCSequenceDataGet(ADC0_BASE, 3, &adc0Ssq3Value);
+    // Update PWM duty cycle based on ADC reading (0-4095 -> 0-100%)
+    fDutyCycle = (float)adc0Ssq3Value / 4095.0f;
+    ui32Width  = (uint32_t)(PWM_LOAD * fDutyCycle);
+    // Clamp: PWM hardware requires 1 <= width <= (PWM_LOAD - 1)
+    // If width == 0 or >= PWM_LOAD the comparator never fires -> output glitches
+    if(ui32Width < 1)           ui32Width = 1;
+    if(ui32Width > PWM_LOAD - 1) ui32Width = PWM_LOAD - 1;
+    MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_2, ui32Width);
+    // Signal main loop that a new ADC value is ready
+    adc_ready = 0x01;
 }
 
 void pwm0_config(void){
@@ -159,6 +176,8 @@ void pwm0_config(void){
     MAP_PWMClockSet(PWM0_BASE, PWM_SYSCLK_DIV_2);
     // Config PWM generator
     MAP_PWMGenConfigure(PWM0_BASE,PWM_GEN_1,PWM_GEN_MODE_UP_DOWN | PWM_GEN_MODE_NO_SYNC | PWM_GEN_MODE_DBG_STOP);
+    // Enable PWM triger output
+    PWMGenIntTrigEnable(PWM0_BASE, PWM_GEN_1, PWM_TR_CNT_ZERO);
     // Set PWM period
     MAP_PWMGenPeriodSet(PWM0_BASE,PWM_GEN_1,PWM_LOAD);
     // Set PWM pulse width
