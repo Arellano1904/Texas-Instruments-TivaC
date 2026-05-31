@@ -30,15 +30,18 @@
 // Definitions.
 //*****************************************************************************
 #define SYSCLK_HZ 120000000
-#define ADC_RESOLUTION 4096.0f 
-#define ADC_REf 3.3f
+#define ADC_SCALE (3.3f / 4095.0f)
 #define TIMER_LOAD (SYSCLK_HZ/ 1000) // 1ms
+#define PWM_FREQ 20000
+#define PWM_CLK (SYSCLK_HZ / 2)  // PWM_SYSCLK_DIV_2 divides by 2
+#define PWM_LOAD (PWM_CLK / PWM_FREQ)
 //*****************************************************************************
 // Functions declarations.
 //*****************************************************************************
 void adc0ssq3_config(void);
 void adc0ssq3_handler(void);
 void timer0_config(void);
+void pwm0_config(void);
 //*****************************************************************************
 // The error routine that is called if the driver library encounters an error.
 //*****************************************************************************
@@ -55,35 +58,39 @@ volatile uint32_t systemClkFreq;
 uint32_t adc0Ssq3Value = 0x0000;
 volatile float adcValue = 0.0f;
 volatile uint8_t adc_ready = 0x00;
+uint32_t pwmLoad = 0x0000;
+volatile float fDutyCycle = 0.50f;   // 50%
+uint32_t ui32Width = 0x0000;
 
 //*****************************************************************************
 // Main 'C' Language entry point.  Toggle an LED using TivaWare.
 //*****************************************************************************
 int main(void){
     // Run from the PLL at 120 MHz.
-    systemClkFreq = SysCtlClockFreqSet((SYSCTL_XTAL_25MHZ |SYSCTL_OSC_MAIN |SYSCTL_USE_PLL | SYSCTL_CFG_VCO_240), 120000000);
+    systemClkFreq = SysCtlClockFreqSet((SYSCTL_XTAL_25MHZ |SYSCTL_OSC_MAIN |SYSCTL_USE_PLL | SYSCTL_CFG_VCO_240), SYSCLK_HZ);
     // Floating point unit enable
     MAP_FPUEnable();
     MAP_FPULazyStackingEnable();
-    // Global interrupt enable
-    MAP_IntMasterEnable();  
     // Display init //
     ili9341_init();
     ili9341_fill_screen(BLACK);
     ili9341_print_string(0, 0, "TivaC: EK-TM4C1294XL", RED, BLACK);
-    ili9341_print_string(0, 16, "2.4SpiDisplay : ILI9341", RED, BLACK);
+    ili9341_print_string(0, 16, "2.4SpiDisplay:ILI9341-240x320", RED, BLACK);
     ili9341_print_string(0, 32, "Voltaje: ", BLUE,BLACK);
     
     // ADC config function
     adc0ssq3_config();
     // Timer
     timer0_config();
-               
+    // PWM 
+    pwm0_config();
+    // Global interrupt enable
+    MAP_IntMasterEnable();        
     // Loop Forever
     while(1){
         if(adc_ready){
         adc_ready == 0x00;
-        adcValue = ((float)adc0Ssq3Value / ADC_RESOLUTION) * ADC_REf;
+        adcValue = ((float)adc0Ssq3Value * ADC_SCALE);
         ili9341_print_float(65, 32, adcValue, 2, BLUE, BLACK);
         }
     }
@@ -137,6 +144,29 @@ void adc0ssq3_handler(void){
     MAP_ADCIntClear(ADC0_BASE, 3);     
     adc_ready = 0x01;
     MAP_ADCSequenceDataGet(ADC0_BASE, 3, &adc0Ssq3Value);
+}
+
+void pwm0_config(void){
+    // Enabling and waiting for related peripheral
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_PWM0);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_PWM0));
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF));
+    // Configure pin PM3 as PWM output
+    MAP_GPIOPinConfigure(GPIO_PF2_M0PWM2);
+    MAP_GPIOPinTypePWM(GPIO_PORTF_BASE, GPIO_PIN_2);
+    // Config PWM module clock
+    MAP_PWMClockSet(PWM0_BASE, PWM_SYSCLK_DIV_2);
+    // Config PWM generator
+    MAP_PWMGenConfigure(PWM0_BASE,PWM_GEN_1,PWM_GEN_MODE_UP_DOWN | PWM_GEN_MODE_NO_SYNC | PWM_GEN_MODE_DBG_STOP);
+    // Set PWM period
+    MAP_PWMGenPeriodSet(PWM0_BASE,PWM_GEN_1,PWM_LOAD);
+    // Set PWM pulse width
+    ui32Width = (uint32_t)(PWM_LOAD * fDutyCycle);
+    MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_2, ui32Width);
+    // Enable PWM output
+    MAP_PWMOutputState(PWM0_BASE, PWM_OUT_2_BIT, true);
+    MAP_PWMGenEnable(PWM0_BASE, PWM_GEN_1);
 }
 
 

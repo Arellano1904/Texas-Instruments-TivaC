@@ -225,7 +225,7 @@ void ili9341_fill_screen(uint16_t color){
     ili9341_enable();
     ili9341_data_mode();
 
-    for (i = 0; i < (ILI9341_HEIGHT/ILI9341_LINES_PER_BUFFER); i++){
+    for (i = 0; i < ILI9341_HEIGHT; i+=ILI9341_LINES_PER_BUFFER){
         /*
          * Wait only for DMA done — NOT for SSIBusy.
          * The FIFO keeps clocking bits out in the background while we poll.
