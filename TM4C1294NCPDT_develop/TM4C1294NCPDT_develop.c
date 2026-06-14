@@ -1,58 +1,48 @@
 //*****************************************************************************
-//
-// project0.c - Example to demonstrate minimal TivaWare setup
-//
-// Copyright (c) 2012-2020 Texas Instruments Incorporated.  All rights reserved.
-// Software License Agreement
-// 
-// Texas Instruments (TI) is supplying this software for use solely and
-// exclusively on TI's microcontroller products. The software is owned by
-// TI and/or its suppliers, and is protected under applicable copyright
-// laws. You may not combine this software with "viral" open-source
-// software in order to form a larger program.
-// 
-// THIS SOFTWARE IS PROVIDED "AS IS" AND WITH ALL FAULTS.
-// NO WARRANTIES, WHETHER EXPRESS, IMPLIED OR STATUTORY, INCLUDING, BUT
-// NOT LIMITED TO, IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE APPLY TO THIS SOFTWARE. TI SHALL NOT, UNDER ANY
-// CIRCUMSTANCES, BE LIABLE FOR SPECIAL, INCIDENTAL, OR CONSEQUENTIAL
-// DAMAGES, FOR ANY REASON WHATSOEVER.
-// 
-// This is part of revision 2.2.0.295 of the EK-TM4C1294XL Firmware Package.
-//
+// Boost converter.
 //*****************************************************************************
 
+//*****************************************************************************
+// LIBRARIES
+//*****************************************************************************
+// Common used libraries.
 #include <stdint.h>
 #include <stdbool.h>
+// The inc folder contains the device header files for each TM4C device as well as the hardware header.
 #include "inc/hw_types.h"
 #include "inc/hw_memmap.h"
+#include "inc/hw_ints.h"
+// The driverlib folder contains the TivaWare Driver Library (DriverLib) source code that allows users to leverage TI validated functions.
+#include "driverlib/rom_map.h"
 #include "driverlib/sysctl.h"
+#include "driverlib/pin_map.h"
+#include "driverlib/fpu.h" 
 #include "driverlib/gpio.h"
+#include "driverlib/interrupt.h"
+#include "driverlib/timer.h"
+#include "driverlib/pwm.h"
+#include "driverlib/adc.h"
+// Own driver libraries.
+#include "drivers/ili9341_tm4c1294.h"
 
 //*****************************************************************************
-//
-// Define pin to LED mapping.
-//
+// Definitions.
 //*****************************************************************************
-
+#define SYSCLK_HZ 120000000
+#define ADC_SCALE (3.3f / 4095.0f)
+#define TIMER_LOAD (SYSCLK_HZ/ 1000) // 1ms
+#define PWM_FREQ 20000
+#define PWM_CLK (SYSCLK_HZ / 2)  // PWM_SYSCLK_DIV_2 divides by 2
+#define PWM_LOAD (PWM_CLK / PWM_FREQ)
 //*****************************************************************************
-//
-//! \addtogroup example_list
-//! <h1>Project Zero (project0)</h1>
-//!
-//! This example demonstrates the use of TivaWare to setup the clocks and
-//! toggle GPIO pins to make the LED blink. This is a good place to start
-//! understanding your launchpad and the tools that can be used to program it.
-//
+// Functions declarations.
 //*****************************************************************************
-
-#define USER_LED1  GPIO_PIN_0
-#define USER_LED2  GPIO_PIN_1
-
+void adc0ssq3_config(void);
+void adc0ssq3_handler(void);
+void timer0_config(void);
+void pwm0_config(void);
 //*****************************************************************************
-//
 // The error routine that is called if the driver library encounters an error.
-//
 //*****************************************************************************
 #ifdef DEBUG
 void
@@ -60,63 +50,142 @@ __error__(char *pcFilename, uint32_t ui32Line)
 {
 }
 #endif
+//*****************************************************************************
+// Global variables.
+//*****************************************************************************
+volatile uint32_t systemClkFreq;
+uint32_t adc0Ssq3Value = 0x0000;
+volatile float adcValue = 0.0f;
+volatile uint8_t adc_ready = 0x00;
+uint32_t pwmLoad = 0x0000;
+volatile float fDutyCycle = 0.50f;   // 50%
+uint32_t ui32Width = 0x0000;
 
 //*****************************************************************************
-//
 // Main 'C' Language entry point.  Toggle an LED using TivaWare.
-//
 //*****************************************************************************
-int
-main(void)
-{
-    uint32_t ui32SysClock;
-
-    //
+int main(void){
     // Run from the PLL at 120 MHz.
-    // Note: SYSCTL_CFG_VCO_240 is a new setting provided in TivaWare 2.2.x and
-    // later to better reflect the actual VCO speed due to SYSCTL#22.
-    //
-    ui32SysClock = SysCtlClockFreqSet((SYSCTL_XTAL_25MHZ |
-                                       SYSCTL_OSC_MAIN |
-                                       SYSCTL_USE_PLL |
-                                       SYSCTL_CFG_VCO_240), 120000000);
-
-    //
-    // Enable and wait for the port to be ready for access
-    //
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPION);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPION))
-    {
-    }
+    systemClkFreq = SysCtlClockFreqSet((SYSCTL_XTAL_25MHZ |SYSCTL_OSC_MAIN |SYSCTL_USE_PLL | SYSCTL_CFG_VCO_240), SYSCLK_HZ);
+    // Floating point unit enable
+    MAP_FPUEnable();
+    MAP_FPULazyStackingEnable();
+    // Display init //
+    ili9341_init();
+    ili9341_fill_screen(BLACK);
+    ili9341_print_string(0, 0, "TivaC: EK-TM4C1294XL", RED, BLACK);
+    ili9341_print_string(0, 16, "2.4SpiDisplay:ILI9341-240x320", RED, BLACK);
+    ili9341_print_string(0, 32, "Voltaje: ", BLUE,BLACK);
+    ili9341_print_string(104, 32, "DutyC:", CYAN,BLACK);
     
-    //
-    // Configure the GPIO port for the LED operation.
-    //
-    GPIOPinTypeGPIOOutput(GPIO_PORTN_BASE, (USER_LED1|USER_LED2));
-
-    //
+    // ADC config function
+    adc0ssq3_config();
+    // Timer
+    timer0_config();
+    // PWM 
+    pwm0_config();
+    // Global interrupt enable
+    MAP_IntMasterEnable();        
     // Loop Forever
-    //
-    while(1)
-    {
-        //
-        // Turn on the LED
-        //
-        GPIOPinWrite(GPIO_PORTN_BASE, (USER_LED1|USER_LED2), USER_LED1);
-
-        //
-        // Delay for a bit
-        //
-        SysCtlDelay(ui32SysClock/6);
-
-        //
-        // Turn on the LED
-        //
-        GPIOPinWrite(GPIO_PORTN_BASE, (USER_LED1|USER_LED2), USER_LED2);
-
-        //
-        // Delay for a bit
-        //
-        SysCtlDelay(ui32SysClock/6);
+    while(1){
+        if(adc_ready){
+        adc_ready = 0x00;
+        adcValue = ((float)adc0Ssq3Value * ADC_SCALE);
+        ili9341_print_float(65, 32, adcValue, 2, BLUE, BLACK);
+        ili9341_print_float(153, 32, fDutyCycle, 2, CYAN, BLACK);
+        }
     }
 }
+
+//*****************************************************************************
+// Functions definitions.
+//*****************************************************************************
+
+void timer0_config(void){
+    // Enable peripheral
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER0);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_TIMER0));
+    // Configure the timer
+    MAP_TimerDisable(TIMER0_BASE, TIMER_A);
+    MAP_TimerConfigure(TIMER0_BASE, TIMER_CFG_PERIODIC_UP);
+    MAP_TimerLoadSet(TIMER0_BASE, TIMER_A, (TIMER_LOAD - 1));
+    // Enable triger event for ADC
+    MAP_TimerControlTrigger(TIMER0_BASE, TIMER_A, true);
+    MAP_TimerEnable(TIMER0_BASE, TIMER_A);
+}
+
+void adc0ssq3_config(void){
+    // Enable the ADC module and related peripheral
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_ADC0);
+    // Wait for the ADC0 module to be ready
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_ADC0));
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOE));
+    // Disable digital function on the pin
+    MAP_GPIOPinTypeADC(GPIO_PORTE_BASE, GPIO_PIN_3);
+    // Config ADC clock
+    ADCClockConfigSet(ADC0_BASE,ADC_CLOCK_SRC_PLL | ADC_CLOCK_RATE_FULL,12);
+    // Use VDDA (3.3 V)
+    MAP_ADCReferenceSet(ADC0_BASE, ADC_REF_INT);
+    // Configure ADC oversampling
+    MAP_ADCHardwareOversampleConfigure(ADC0_BASE, 0);
+    // Disable sequencer 3 during config
+    MAP_ADCSequenceDisable(ADC0_BASE, 3);
+    // Enable the first sample sequencer to capture the value of channel 0 when the processor trigger occurs
+    MAP_ADCSequenceConfigure(ADC0_BASE, 3, ADC_TRIGGER_PWM_MOD0 | ADC_TRIGGER_PWM1, 0);
+    // Configure sequencer steps
+    MAP_ADCSequenceStepConfigure(ADC0_BASE, 3, 0,ADC_CTL_IE | ADC_CTL_END | ADC_CTL_CH0);
+    // Clear ADC0 Sequencer 3 interrupt
+    MAP_ADCIntClear(ADC0_BASE, 3);
+    // Enable ADC0 Sequencer 3 interrupt    
+    MAP_ADCIntEnable(ADC0_BASE, 3);
+    // Enable interrupt in NVIC
+    MAP_IntEnable(INT_ADC0SS3);
+    // Enable ADC sequencer
+    MAP_ADCSequenceEnable(ADC0_BASE, 3);
+
+}
+// ADC0 Sequencer 3 interrupt handler
+void adc0ssq3_handler(void){
+    // ALWAYS clear first, before reading
+    MAP_ADCIntClear(ADC0_BASE, 3);
+    // Read ADC result
+    MAP_ADCSequenceDataGet(ADC0_BASE, 3, &adc0Ssq3Value);
+    // Update PWM duty cycle based on ADC reading (0-4095 -> 0-100%)
+    fDutyCycle = (float)adc0Ssq3Value / 4095.0f;
+    ui32Width  = (uint32_t)(PWM_LOAD * fDutyCycle);
+    // Clamp: PWM hardware requires 1 <= width <= (PWM_LOAD - 1)
+    // If width == 0 or >= PWM_LOAD the comparator never fires -> output glitches
+    if(ui32Width < 1)           ui32Width = 1;
+    if(ui32Width > PWM_LOAD - 1) ui32Width = PWM_LOAD - 1;
+    MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_2, ui32Width);
+    // Signal main loop that a new ADC value is ready
+    adc_ready = 0x01;
+}
+
+void pwm0_config(void){
+    // Enabling and waiting for related peripheral
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_PWM0);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_PWM0));
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF));
+    // Configure pin PM3 as PWM output
+    MAP_GPIOPinConfigure(GPIO_PF2_M0PWM2);
+    MAP_GPIOPinTypePWM(GPIO_PORTF_BASE, GPIO_PIN_2);
+    // Config PWM module clock
+    MAP_PWMClockSet(PWM0_BASE, PWM_SYSCLK_DIV_2);
+    // Config PWM generator
+    MAP_PWMGenConfigure(PWM0_BASE,PWM_GEN_1,PWM_GEN_MODE_UP_DOWN | PWM_GEN_MODE_NO_SYNC | PWM_GEN_MODE_DBG_STOP);
+    // Enable PWM triger output
+    PWMGenIntTrigEnable(PWM0_BASE, PWM_GEN_1, PWM_TR_CNT_ZERO);
+    // Set PWM period
+    MAP_PWMGenPeriodSet(PWM0_BASE,PWM_GEN_1,PWM_LOAD);
+    // Set PWM pulse width
+    ui32Width = (uint32_t)(PWM_LOAD * fDutyCycle);
+    MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_2, ui32Width);
+    // Enable PWM output
+    MAP_PWMOutputState(PWM0_BASE, PWM_OUT_2_BIT, true);
+    MAP_PWMGenEnable(PWM0_BASE, PWM_GEN_1);
+}
+
+
