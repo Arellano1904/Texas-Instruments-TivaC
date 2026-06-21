@@ -77,6 +77,8 @@ int main(void)
     st7735_init();
     // Fille the screen
     st7735_fill_screen(BLACK);
+    st7735_print_string(0, 0, "TivaC: TM4C123GH6PM", RED, BLACK);
+    st7735_print_string(0, 10, "1.8SpiDisplay: ST7735", RED, BLACK);
     // Loop Forever
     while(1)
     {
@@ -84,15 +86,11 @@ int main(void)
             sw1State = 0x0;
             // Turn red led on.
             GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1 | GPIO_PIN_2, 0x02);
-            // Fill screen on RED
-            st7735_print_string(0, 0, "TivaC: TM4C123GH6PM", RED, BLACK);
         }
         if(sw2State){// SW2 pressed
             sw2State = 0x00;
             // Turn blue led on.
             GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1 | GPIO_PIN_2, 0x04);
-            // Fill screen on BLUE
-            st7735_print_string(0, 10, "1.8SpiDisplay: ST7735", BLUE, BLACK);
         }
     }
 }

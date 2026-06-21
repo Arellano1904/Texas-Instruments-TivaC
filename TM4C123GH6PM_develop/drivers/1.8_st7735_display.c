@@ -135,12 +135,23 @@ const uint8_t Font5x7[] = {
 #define st7735_WIDTH   128
 #define st7735_HEIGHT  160
 
+// Font / character-cell geometry (Adafruit 5x7 glyph + 1 px spacing).
+#define FONT_WIDTH     5            // glyph columns read from Font5x7
+#define CHAR_WIDTH     6            // glyph + inter-character spacing column
+#define CHAR_HEIGHT    8            // glyph rows + spacing row
+
+// The uDMA controller moves at most 1024 items in a single basic-mode request.
+#define UDMA_MAX_ITEMS     1024
+// Whole characters that fit in one DMA request (21 * 48 = 1008 <= 1024).
+#define MAX_CHARS_PER_DMA  (UDMA_MAX_ITEMS / (CHAR_WIDTH * CHAR_HEIGHT))
+
 // Array for uDMA requirement.
 #pragma DATA_ALIGN(uDMAControlTable, 1024);
 uint8_t uDMAControlTable[1024];
 
-// Buffer to fill a color line  //
-uint16_t colorBuffer[st7735_WIDTH];
+// Shared 16-bit pixel buffer, source for every pixel DMA transfer (screen
+// fills and rendered text). Sized to the uDMA single-request maximum.
+static uint16_t dmaBuffer[UDMA_MAX_ITEMS];
 
 // SPI3 
 void spi3_config(void){
@@ -165,7 +176,7 @@ void spi3_config(void){
     // Configure RESET pin (PB5) //
     MAP_GPIOPinTypeGPIOOutput(GPIO_PORTB_BASE,  GPIO_PIN_5);
 
-    // Configure the SSI3 as SPI MODE0, 8-bit, 16 MHz // 
+    // Configure the SSI3 as SPI MODE0, 16-bit frames, 30 MHz bit clock //
     MAP_SSIConfigSetExpClk(SSI3_BASE,MAP_SysCtlClockGet(),SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,30000000,16);
     // Enabling the SSI3 module //
     MAP_SSIEnable(SSI3_BASE);
@@ -202,13 +213,13 @@ void uDMA_spi3_config(void){
 
     // Configure channel
     MAP_uDMAChannelControlSet(UDMA_CH15_SSI3TX | UDMA_PRI_SELECT,
-        UDMA_SIZE_16 |        // 16-bit data
-        UDMA_SRC_INC_16 |     // increment source
-        UDMA_DST_INC_NONE |   // SSI FIFO
-        UDMA_ARB_8);          // burst of 16 words
+        UDMA_SIZE_16 |        // 16-bit data (one RGB565 pixel per item)
+        UDMA_SRC_INC_16 |     // walk through the source buffer
+        UDMA_DST_INC_NONE |   // SSI3 data register stays put
+        UDMA_ARB_8);          // re-arbitrate every 8 items (SSI FIFO depth)
 
-    // Ennabling the interruption
-    MAP_IntEnable(INT_UDMA);
+    // Transfers are polled to completion in uDMA_spi3_send_buffer(), so the
+    // uDMA completion interrupt is left disabled on purpose (no ISR exists).
 }
 
 void uDMA_spi3_send_buffer(uint16_t* dataBuffer, uint32_t count){
@@ -234,12 +245,11 @@ void uDMA_spi3_send_buffer(uint16_t* dataBuffer, uint32_t count){
     while(MAP_SSIBusy(SSI3_BASE));
 
     // CS high to disabble the display //
-    MAP_GPIOPinWrite(GPIO_PORTD_BASE, GPIO_PIN_1, GPIO_PIN_1);;
-
+    MAP_GPIOPinWrite(GPIO_PORTD_BASE, GPIO_PIN_1, GPIO_PIN_1);
 }
 
-// Display 
-void st7735_init(){
+// Display
+void st7735_init(void){
     // No coments needed //
     st7735_reset();
     // Config the spi3 to send commands and data configuration.
@@ -283,7 +293,7 @@ void st7735_send_data(uint8_t data){
     // Wait for data to be tansfered //
     while(MAP_SSIBusy(SSI3_BASE));
     // CS high to disabble the display //
-    MAP_GPIOPinWrite(GPIO_PORTD_BASE, GPIO_PIN_1, GPIO_PIN_1);;
+    MAP_GPIOPinWrite(GPIO_PORTD_BASE, GPIO_PIN_1, GPIO_PIN_1);
 }
 
 void st7735_reset(void){
@@ -316,73 +326,93 @@ void st7735_set_window(uint16_t x0, uint16_t y0,uint16_t x1, uint16_t y1){
     
 }
 
-void st7735_fill_screen(uint16_t color){ // Aqui en fill screen ha de estar el pedo.
+void st7735_fill_screen(uint16_t color){
+    uint32_t remaining = (uint32_t)st7735_WIDTH * st7735_HEIGHT;
     uint32_t i;
-    // Prepare one line
-    for(i = 0; i < st7735_WIDTH; i++)
-        colorBuffer[i] = color;
-    // Set full window
-    st7735_set_window(0, 0,st7735_WIDTH - 1,st7735_HEIGHT - 1);
 
-    for(i = 0; i < st7735_HEIGHT; i++){ 
-        uDMA_spi3_send_buffer(colorBuffer, st7735_WIDTH); // Esta funcion ya no espera a que se termine la transmision.
+    // Pre-load the whole DMA buffer with the fill color once.
+    for(i = 0; i < UDMA_MAX_ITEMS; i++)
+        dmaBuffer[i] = color;
+
+    // Address the full panel, then stream it in maximum-size DMA bursts.
+    st7735_set_window(0, 0, st7735_WIDTH - 1, st7735_HEIGHT - 1);
+
+    while(remaining){
+        uint32_t chunk = (remaining > UDMA_MAX_ITEMS) ? UDMA_MAX_ITEMS : remaining;
+        uDMA_spi3_send_buffer(dmaBuffer, chunk);
+        remaining -= chunk;
+    }
+}
+
+// Render a run of up to MAX_CHARS_PER_DMA characters into the shared buffer and
+// push the whole block to the panel in a SINGLE uDMA request. The buffer is
+// laid out row-major to match the order the controller writes pixels into the
+// addressed window: row 0 of every character, then row 1, and so on.
+static void st7735_draw_run(uint16_t x, uint16_t y, const char *str, uint8_t n,
+                            uint16_t fg, uint16_t bg){
+    uint16_t runWidth = (uint16_t)n * CHAR_WIDTH;
+    uint8_t row, col, ch;
+
+    for(row = 0; row < CHAR_HEIGHT; row++)
+    {
+        uint16_t rowBase = (uint16_t)row * runWidth;
+
+        for(ch = 0; ch < n; ch++)
+        {
+            char c = str[ch];
+            const uint8_t *glyph;
+            uint16_t base = rowBase + (uint16_t)ch * CHAR_WIDTH;
+
+            if(c < 32 || c > 126)
+                c = '?';
+            glyph = &Font5x7[(c - 32) * FONT_WIDTH];
+
+            for(col = 0; col < FONT_WIDTH; col++)
+                dmaBuffer[base + col] = (glyph[col] & (1 << row)) ? fg : bg;
+
+            // inter-character spacing column
+            dmaBuffer[base + FONT_WIDTH] = bg;
+        }
     }
 
-    // CS high to disabble the display //
-    MAP_GPIOPinWrite(GPIO_PORTD_BASE,GPIO_PIN_1, GPIO_PIN_1);
+    // One window, one transfer for the whole run.
+    st7735_set_window(x, y, x + runWidth - 1, y + CHAR_HEIGHT - 1);
+    uDMA_spi3_send_buffer(dmaBuffer, (uint32_t)runWidth * CHAR_HEIGHT);
 }
 
 void st7735_draw_char(uint16_t x,uint16_t y,char c,uint16_t fg,uint16_t bg){
-    uint16_t lineBuffer[6];
-    uint8_t col, row;
-    const uint8_t *glyph;
-
-    if(c < 32 || c > 127)
-        c = '?';
-
-    glyph = &Font5x7[(c - 32) * 5];
-
-    // CS low to enable the Display and DC high to data mode //
-    MAP_GPIOPinWrite(GPIO_PORTD_BASE,GPIO_PIN_1 | GPIO_PIN_2, 0x04);
-
-    // Set window for ONE character
-    st7735_set_window(x, y, x + 5, y + 7);
-
-    for(row = 0; row < 7; row++)
-    {
-        for(col = 0; col < 5; col++)
-        {
-            if(glyph[col] & (1 << row))
-                lineBuffer[col] = fg;
-            else
-                lineBuffer[col] = bg;
-        }
-
-        // spacing column
-        lineBuffer[5] = bg;
-
-        uDMA_spi3_send_buffer(lineBuffer, 6);
-    }
-
-    // Last spacing row
-    for(col = 0; col < 6; col++)
-        lineBuffer[col] = bg;
-
-    uDMA_spi3_send_buffer(lineBuffer, 6);
+    char s[2];
+    s[0] = c;
+    s[1] = '\0';
+    st7735_draw_run(x, y, s, 1, fg, bg);
 }
 
 void st7735_print_string(uint16_t x,uint16_t y,const char *str,uint16_t fg,uint16_t bg){
     while(*str)
     {
-        st7735_draw_char(x, y, *str++, fg, bg);
-        x += 6;
+        uint8_t charsToEdge, maxRun, run;
 
-        // simple wrap
-        if(x + 6 >= st7735_WIDTH)
+        // Whole characters that still fit on the current line.
+        charsToEdge = (st7735_WIDTH - x) / CHAR_WIDTH;
+        if(charsToEdge == 0)
         {
+            // Wrap to the next text line.
             x = 0;
-            y += 8;
+            y += CHAR_HEIGHT;
+            charsToEdge = st7735_WIDTH / CHAR_WIDTH;
         }
+
+        // Cap the run by what fits on the line and by one DMA request.
+        maxRun = (charsToEdge < MAX_CHARS_PER_DMA) ? charsToEdge : MAX_CHARS_PER_DMA;
+
+        run = 0;
+        while(run < maxRun && str[run])
+            run++;
+
+        st7735_draw_run(x, y, str, run, fg, bg);
+
+        str += run;
+        x   += (uint16_t)run * CHAR_WIDTH;
     }
 }
 
@@ -419,34 +449,60 @@ void int_to_str(int32_t value, char *buf)
 void float_to_str(float value, char *buf, uint8_t decimals)
 {
     int32_t intPart;
-    float frac;
-    int i = 0,j = 0;
+    float frac, rounding;
+    char intBuf[12];
+    int i = 0, j;
+    uint8_t d;
+    int negative = 0;
 
-    if (value < 0)
+    // NaN / Inf produce garbage when cast to int, so report them explicitly.
+    if (value != value) { buf[0] = 'n'; buf[1] = 'a'; buf[2] = 'n'; buf[3] = '\0'; return; }
+    if (value >  3.4e38f || value < -3.4e38f)
     {
-        buf[i++] = '-';
+        if (value < 0) buf[i++] = '-';
+        buf[i++] = 'i'; buf[i++] = 'n'; buf[i++] = 'f'; buf[i] = '\0';
+        return;
+    }
+
+    if (value < 0.0f)
+    {
+        negative = 1;
         value = -value;
     }
 
+    // Round half away from zero: add half of the last shown digit's weight.
+    rounding = 0.5f;
+    for (d = 0; d < decimals; d++)
+        rounding *= 0.1f;
+
+    // Only emit the sign if the value still rounds to something non-zero,
+    // so e.g. -0.001 at 2 decimals prints "0.00" instead of "-0.00".
+    if (negative && value >= rounding)
+        buf[i++] = '-';
+
+    value += rounding;            // rounding may carry into the integer part
+
     intPart = (int32_t)value;
-    frac = value - intPart;
+    frac = value - (float)intPart;
 
     // Integer part
-    char intBuf[12];
     int_to_str(intPart, intBuf);
-
     for (j = 0; intBuf[j]; j++)
         buf[i++] = intBuf[j];
 
-    buf[i++] = '.';
-
-    // Fractional part
-    while (decimals--)
+    // Fractional part (omit the dot entirely when no decimals are requested)
+    if (decimals > 0)
     {
-        frac *= 10.0f;
-        int digit = (int)frac;
-        buf[i++] = digit + '0';
-        frac -= digit;
+        buf[i++] = '.';
+        while (decimals--)
+        {
+            int digit;
+            frac *= 10.0f;
+            digit = (int)frac;
+            if (digit > 9) digit = 9;   // guard against float rounding error
+            buf[i++] = (char)(digit + '0');
+            frac -= digit;
+        }
     }
 
     buf[i] = '\0';

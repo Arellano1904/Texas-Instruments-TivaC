@@ -1,4 +1,8 @@
 // Header file to handle a 1.8_st7735_spi_display
+#ifndef ST7735_DISPLAY_H_
+#define ST7735_DISPLAY_H_
+
+#include <stdint.h>
 
 //***** Colores b�sicos en formato RGB565 *****//
 #define BLACK       0x0000
@@ -29,10 +33,9 @@ void spi3_len_config(uint16_t bits);
 // uDMA
 void uDMA_spi3_config(void);
 void uDMA_spi3_send_buffer(uint16_t* dataBuffer, uint32_t count);
-void uDMA_spi3_int_handler(void);
 
 // Display
-void st7735_init();
+void st7735_init(void);
 void st7735_send_command(uint8_t cmd);
 void st7735_send_data(uint8_t data);
 void st7735_reset(void);
@@ -44,3 +47,5 @@ void int_to_str(int32_t value, char *buf);
 void float_to_str(float value, char *buf, uint8_t decimals);
 void st7735_print_int(uint16_t x, uint16_t y,int32_t value,uint16_t color, uint16_t bg);
 void st7735_print_float(uint16_t x, uint16_t y,float value, uint8_t decimals,uint16_t color, uint16_t bg);
+
+#endif // ST7735_DISPLAY_H_
