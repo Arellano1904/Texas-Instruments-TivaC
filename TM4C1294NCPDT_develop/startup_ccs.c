@@ -36,7 +36,7 @@ static void NmiSR(void);
 static void FaultISR(void);
 static void IntDefaultHandler(void);
 
-/* ── Application handler — defined in main.c ────────────────────────────────── */
+/* ── Application handler — defined in drivers/ili9341_tm4c1294.c ─────────────── */
 extern void adc0ssq3_handler(void);
 
 //*****************************************************************************

@@ -12,6 +12,7 @@
 #include "inc/hw_gpio.h"
 #include "inc/hw_ssi.h"
 #include "inc/hw_udma.h"
+#include "inc/hw_ints.h"
 // The driverlib folder contains the TivaWare Driver Library (DriverLib) source code that allows users to leverage TI validated functions.
 #include "driverlib/rom_map.h"
 #include "driverlib/sysctl.h"
@@ -19,8 +20,16 @@
 #include "driverlib/ssi.h"
 #include "driverlib/gpio.h"
 #include "driverlib/udma.h"
+#include "driverlib/interrupt.h"
+#include "driverlib/timer.h"
+#include "driverlib/pwm.h"
+#include "driverlib/adc.h"
 
-// Fonts for display 
+// Internal string helpers (private to this translation unit).
+static void intToStr(int32_t value, char *buf);
+static void floatToStr(float value, char *buf, uint8_t decimals);
+
+// Fonts for display
 static const unsigned char font8x16[][16] = { 
         { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  },       //0x20, ' '
         { 0x00, 0x00, 0x18, 0x3C, 0x3C, 0x3C, 0x18, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,  },       //0x21, '!'
@@ -150,9 +159,9 @@ void ili9341_reset(void){
 void ili9341_send_command(uint8_t cmd){
     ili9341_enable();
     ili9341_cmd_mode();
-    // Send the command trough SPI1
+    // Send the command through SSI2
     MAP_SSIDataPut(SSI2_BASE, cmd);
-    // Wait for data to be tansfered
+    // Wait for data to be transferred
     while(MAP_SSIBusy(SSI2_BASE));
     ili9341_disable();
 }
@@ -160,9 +169,9 @@ void ili9341_send_command(uint8_t cmd){
 void ili9341_send_data(uint8_t data){
     ili9341_enable();
     ili9341_data_mode();
-    // Send the data to the spi2
+    // Send the data to SSI2
     MAP_SSIDataPut(SSI2_BASE, data);
-    // Wait for data to be tansfered
+    // Wait for data to be transferred
     while(MAP_SSIBusy(SSI2_BASE));
     ili9341_disable();
 }
@@ -172,6 +181,9 @@ void ili9341_init(void){
     spi2_config();
     // uDMA //
     uDMA_spi2_config();
+    // Backlight brightness control (ADC input -> PWM duty), provided by the display driver.
+    adc0ssq3_config();
+    pwm0_config();
     ili9341_enable();
     ili9341_reset();
     // Change to 8bit len to send commands
@@ -339,13 +351,16 @@ void ili9341_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fgColo
 } 
 
 void ili9341_print_int(uint16_t x, uint16_t y,int32_t num,uint16_t color, uint16_t bg){
-    char buf[12];
+    char buf[12];   // "-2147483648" + '\0' = 12 bytes
     intToStr(num, buf);
     ili9341_print_string(x,y,buf,color,bg);
 }
 
 void ili9341_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint16_t color, uint16_t bg){
-    char buf[12];
+    // '-' + up to 10 integer digits + '.' + decimals + '\0'.
+    // Clamp decimals so the result always fits the buffer.
+    char buf[24];
+    if (decimals > 9) decimals = 9;
     floatToStr(num, buf,decimals);
     ili9341_print_string(x,y,buf,color,bg);
 }
@@ -370,7 +385,7 @@ void spi2_config(void){
     MAP_GPIOPinConfigure(GPIO_PD0_SSI2XDAT1);
     MAP_GPIOPinTypeSSI(GPIO_PORTD_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_3 );
     ili9341_enable();
-    // Config QSSI1 module, master mode, 16bits len.
+    // Config QSSI2 module, master mode, 16bits len.
     MAP_SSIDisable(SSI2_BASE);
     SSIClockSourceSet(SSI2_BASE, SSI_CLOCK_SYSTEM);
     MAP_SSIConfigSetExpClk(SSI2_BASE, systemClkFreq, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,30000000, 16);
@@ -392,7 +407,7 @@ void uDMA_spi2_config(void){
     MAP_uDMAEnable();
     // Set base address of control table
     MAP_uDMAControlBaseSet(uDMAControlTable);
-    // Enable uDMA on SSI1 TX
+    // Enable uDMA on SSI2 TX
     MAP_SSIDMAEnable(SSI2_BASE, SSI_DMA_TX);
     // Optional but safe
     MAP_uDMAChannelAssign(UDMA_CH13_SSI2TX);
@@ -423,7 +438,7 @@ void uDMA_spi2_send_buffer(uint16_t* dataBuffer, uint32_t bufferLen){
 }
 
 // Funciones de apoyo
-void intToStr(int32_t value, char *buf){
+static void intToStr(int32_t value, char *buf){
     char tmp[12];
     int i = 0, j = 0;
 
@@ -452,19 +467,28 @@ void intToStr(int32_t value, char *buf){
     buf[j] = '\0';
 }
 
-void floatToStr(float value, char *buf, uint8_t decimals){
+static void floatToStr(float value, char *buf, uint8_t decimals){
     int32_t intPart;
     float frac;
-    int i = 0,j = 0;
+    int i = 0, j = 0;
+    uint8_t d;
 
-    if (value < 0)
+    if (value < 0.0f)
     {
         buf[i++] = '-';
         value = -value;
     }
 
+    // Round to the requested number of decimals so the last digit is correct
+    // (e.g. 1.999 with 2 decimals -> "2.00" instead of truncating to "1.99").
+    // The carry from rounding may also bump the integer part, so do it first.
+    float rounding = 0.5f;
+    for (d = 0; d < decimals; d++)
+        rounding *= 0.1f;
+    value += rounding;
+
     intPart = (int32_t)value;
-    frac = value - intPart;
+    frac = value - (float)intPart;
 
     // Integer part
     char intBuf[12];
@@ -473,16 +497,120 @@ void floatToStr(float value, char *buf, uint8_t decimals){
     for (j = 0; intBuf[j]; j++)
         buf[i++] = intBuf[j];
 
-    buf[i++] = '.';
-
-    // Fractional part
-    while (decimals--)
+    // Fractional part (only when decimals were requested)
+    if (decimals > 0)
     {
-        frac *= 10.0f;
-        int digit = (int)frac;
-        buf[i++] = digit + '0';
-        frac -= digit;
+        buf[i++] = '.';
+        while (decimals--)
+        {
+            frac *= 10.0f;
+            int digit = (int)frac;
+            if (digit > 9) digit = 9;       // guard against fp rounding to 10
+            buf[i++] = (char)('0' + digit);
+            frac -= digit;
+        }
     }
 
     buf[i] = '\0';
+}
+
+//*****************************************************************************
+// Backlight brightness control.
+//
+// The panel backlight is driven by M0PWM2 (PF2); its duty cycle sets the
+// brightness. A control voltage on AIN0 (PE3) is sampled by ADC0 sequencer 3,
+// and the ADC interrupt maps the reading (0..4095) onto the PWM duty cycle.
+// ADC0 SS3 is triggered by PWM generator 1, so conversions are paced by the
+// backlight PWM itself.
+//*****************************************************************************
+#define PWM_FREQ 20000U   // Backlight PWM frequency (Hz)
+
+// Latest raw ADC0 SS3 sample (0..4095). Written by the ISR, read by the app.
+volatile uint32_t adc0Ssq3Value = 0x0000;
+// Set to 1 by the ADC ISR when a new sample is ready; cleared by the consumer.
+volatile uint8_t adc_ready = 0x00;
+// Backlight duty cycle, 0.0..1.0. Updated from the ADC reading in the ISR.
+volatile float fDutyCycle = 0.50f;   // 50%
+// PWM period in clock ticks, computed at runtime from the system clock.
+static uint32_t pwmLoad = 0x0000;
+// PWM pulse width in clock ticks (derived from fDutyCycle).
+static uint32_t ui32Width = 0x0000;
+
+void adc0ssq3_config(void){
+    // Enable the ADC module and related peripheral
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_ADC0);
+    // Wait for the ADC0 module to be ready
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_ADC0));
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOE));
+    // Disable digital function on the pin
+    MAP_GPIOPinTypeADC(GPIO_PORTE_BASE, GPIO_PIN_3);
+    // Config ADC clock
+    ADCClockConfigSet(ADC0_BASE,ADC_CLOCK_SRC_PLL | ADC_CLOCK_RATE_FULL,12);
+    // Use VDDA (3.3 V)
+    MAP_ADCReferenceSet(ADC0_BASE, ADC_REF_INT);
+    // Configure ADC oversampling
+    MAP_ADCHardwareOversampleConfigure(ADC0_BASE, 0);
+    // Disable sequencer 3 during config
+    MAP_ADCSequenceDisable(ADC0_BASE, 3);
+    // Enable the first sample sequencer to capture the value of channel 0 when the processor trigger occurs
+    MAP_ADCSequenceConfigure(ADC0_BASE, 3, ADC_TRIGGER_PWM_MOD0 | ADC_TRIGGER_PWM1, 0);
+    // Configure sequencer steps
+    MAP_ADCSequenceStepConfigure(ADC0_BASE, 3, 0,ADC_CTL_IE | ADC_CTL_END | ADC_CTL_CH0);
+    // Clear ADC0 Sequencer 3 interrupt
+    MAP_ADCIntClear(ADC0_BASE, 3);
+    // Enable ADC0 Sequencer 3 interrupt
+    MAP_ADCIntEnable(ADC0_BASE, 3);
+    // Enable interrupt in NVIC
+    MAP_IntEnable(INT_ADC0SS3);
+    // Enable ADC sequencer
+    MAP_ADCSequenceEnable(ADC0_BASE, 3);
+
+}
+// ADC0 Sequencer 3 interrupt handler
+void adc0ssq3_handler(void){
+    uint32_t sample = 0;
+    // ALWAYS clear first, before reading
+    MAP_ADCIntClear(ADC0_BASE, 3);
+    // Read ADC result into a non-volatile local, then publish it (avoids
+    // passing a volatile pointer to the DriverLib API).
+    MAP_ADCSequenceDataGet(ADC0_BASE, 3, &sample);
+    adc0Ssq3Value = sample;
+    // Update PWM duty cycle based on ADC reading (0-4095 -> 0-100%)
+    fDutyCycle = (float)sample / 4095.0f;
+    ui32Width  = (uint32_t)(pwmLoad * fDutyCycle);
+    // Clamp: PWM hardware requires 1 <= width <= (pwmLoad - 1)
+    // If width == 0 or >= pwmLoad the comparator never fires -> output glitches
+    if(ui32Width < 1)           ui32Width = 1;
+    if(ui32Width > pwmLoad - 1) ui32Width = pwmLoad - 1;
+    MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_2, ui32Width);
+    // Signal main loop that a new ADC value is ready
+    adc_ready = 0x01;
+}
+
+void pwm0_config(void){
+    // Enabling and waiting for related peripheral
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_PWM0);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_PWM0));
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF));
+    // Configure pin PM3 as PWM output
+    MAP_GPIOPinConfigure(GPIO_PF2_M0PWM2);
+    MAP_GPIOPinTypePWM(GPIO_PORTF_BASE, GPIO_PIN_2);
+    // Config PWM module clock
+    MAP_PWMClockSet(PWM0_BASE, PWM_SYSCLK_DIV_2);
+    // PWM period in ticks, derived from the system clock (PWM_SYSCLK_DIV_2 halves it)
+    pwmLoad = (systemClkFreq / 2U) / PWM_FREQ;
+    // Config PWM generator
+    MAP_PWMGenConfigure(PWM0_BASE,PWM_GEN_1,PWM_GEN_MODE_UP_DOWN | PWM_GEN_MODE_NO_SYNC | PWM_GEN_MODE_DBG_STOP);
+    // Enable PWM triger output
+    PWMGenIntTrigEnable(PWM0_BASE, PWM_GEN_1, PWM_TR_CNT_ZERO);
+    // Set PWM period
+    MAP_PWMGenPeriodSet(PWM0_BASE,PWM_GEN_1,pwmLoad);
+    // Set PWM pulse width
+    ui32Width = (uint32_t)(pwmLoad * fDutyCycle);
+    MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_2, ui32Width);
+    // Enable PWM output
+    MAP_PWMOutputState(PWM0_BASE, PWM_OUT_2_BIT, true);
+    MAP_PWMGenEnable(PWM0_BASE, PWM_GEN_1);
 }
