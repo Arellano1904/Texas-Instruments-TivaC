@@ -30,15 +30,26 @@
 #define GREENYELLOW 0xAFE5
 #define PINK        0xFC18      // Distinct from MAGENTA (0xF81F)
 
+// Portrait orientation (panel native 240x320; MADCTL MV bit left clear).
 #define ILI9341_WIDTH   240
 #define ILI9341_HEIGHT  320
 #define ILI9341_LINES_PER_BUFFER 4
-#define ILI9341_CHUNKS_PER_FULL_SCREEN 80
+#define ILI9341_CHUNKS_PER_FULL_SCREEN 80   // ILI9341_HEIGHT / ILI9341_LINES_PER_BUFFER
 #define FONT_WIDTH   8
 #define FONT_HEIGHT 16
 #define FONT_FIRST_CHAR 0x20
 #define FONT_LAST_CHAR 0x7E
 #define FONT_FALLBACK    '?'
+
+//***** ILI9341 command set (subset used by this driver) *****//
+#define ILI9341_SWRESET 0x01   // Software reset
+#define ILI9341_SLPOUT  0x11   // Sleep out
+#define ILI9341_DISPON  0x29   // Display on
+#define ILI9341_CASET   0x2A   // Column address set
+#define ILI9341_PASET   0x2B   // Page address set
+#define ILI9341_RAMWR   0x2C   // Memory write
+#define ILI9341_MADCTL  0x36   // Memory access control
+#define ILI9341_COLMOD  0x3A   // Pixel format set
 
 // ClockFreq variable
 extern volatile uint32_t systemClkFreq;

@@ -13,6 +13,7 @@
 #include "inc/hw_ssi.h"
 #include "inc/hw_udma.h"
 #include "inc/hw_ints.h"
+#include "inc/hw_nvic.h"
 // The driverlib folder contains the TivaWare Driver Library (DriverLib) source code that allows users to leverage TI validated functions.
 #include "driverlib/rom_map.h"
 #include "driverlib/sysctl.h"
@@ -24,10 +25,14 @@
 #include "driverlib/timer.h"
 #include "driverlib/pwm.h"
 #include "driverlib/adc.h"
+#include "driverlib/systick.h"
 
 // Internal string helpers (private to this translation unit).
 static void intToStr(int32_t value, char *buf);
 static void floatToStr(float value, char *buf, uint8_t decimals);
+// Blocking delays (private; SysTick-based).
+static void delay_us(uint32_t us);
+static void delay_ms(uint32_t ms);
 
 // Fonts for display
 static const unsigned char font8x16[][16] = { 
@@ -133,6 +138,35 @@ static const unsigned char font8x16[][16] = {
 uint8_t uDMAControlTable[1024];
 static uint16_t colorBufer[ILI9341_WIDTH * ILI9341_LINES_PER_BUFFER];
 static uint16_t g_ui16CharBuf[FONT_WIDTH * FONT_HEIGHT];
+
+//*****************************************************************************
+// Blocking delays built on the Cortex-M SysTick down-counter.
+//
+// SysTick is a dedicated 24-bit core timer, so these delays are clock-accurate
+// (paced by systemClkFreq) and consume no general-purpose timer. It is unused
+// elsewhere and only runs at boot during display init/reset, so blocking on it
+// is safe. Replaces the approximate, hand-tuned MAP_SysCtlDelay() loops.
+//*****************************************************************************
+static void delay_us(uint32_t us){
+    const uint32_t ticksPerUs = systemClkFreq / 1000000U;  // 120 @ 120 MHz
+    const uint32_t maxChunkUs = 100000U;                   // keeps reload < 2^24
+    while (us){
+        uint32_t chunk = (us > maxChunkUs) ? maxChunkUs : us;
+        MAP_SysTickPeriodSet(chunk * ticksPerUs);
+        HWREG(NVIC_ST_CURRENT) = 0;   // any write clears the counter and COUNTFLAG
+        MAP_SysTickEnable();
+        // Spin until the counter reloads (COUNTFLAG, bit 16, asserts).
+        while ((HWREG(NVIC_ST_CTRL) & NVIC_ST_CTRL_COUNT) == 0){ }
+        MAP_SysTickDisable();
+        us -= chunk;
+    }
+}
+
+static void delay_ms(uint32_t ms){
+    while (ms--)
+        delay_us(1000U);
+}
+
 // DISPLAY //
 void ili9341_enable(void){
     MAP_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_0 , 0x00);
@@ -148,12 +182,12 @@ void ili9341_data_mode(void){
 }
 
 void ili9341_reset(void){
-    // PE2 to low for reset.
+    // Assert RESX low (datasheet min 10 us; 10 ms gives generous margin).
     MAP_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_2, 0x00);
-    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
-    // PE2 high
+    delay_ms(10);
+    // Release reset; the controller reloads its factory defaults.
     MAP_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_2, GPIO_PIN_2);
-    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
+    delay_ms(120); // datasheet: wait before the first command
 }
 
 void ili9341_send_command(uint8_t cmd){
@@ -176,52 +210,94 @@ void ili9341_send_data(uint8_t data){
     ili9341_disable();
 }
 
-void ili9341_init(void){ 
-    // Spi2 //
+//*****************************************************************************
+// Power-on initialization sequence.
+//
+// Data-driven table: each row is { command, parameter count, parameters,
+// post-command delay (ms) }. The power/VCOM/gamma registers are the
+// manufacturer-recommended ILI9341 values; together with the 119 Hz frame
+// rate (FRMCTR1) and the existing 30 MHz SPI + uDMA path they give the best
+// image quality and the fastest refresh the panel supports.
+//*****************************************************************************
+typedef struct {
+    uint8_t  cmd;
+    uint8_t  numArgs;
+    uint8_t  args[15];
+    uint16_t delayMs;
+} ILI9341_InitCmd;
+
+static const ILI9341_InitCmd ili9341_init_seq[] = {
+    { 0xCB, 5, { 0x39, 0x2C, 0x00, 0x34, 0x02 },          0 }, // Power control A
+    { 0xCF, 3, { 0x00, 0xC1, 0x30 },                      0 }, // Power control B
+    { 0xE8, 3, { 0x85, 0x00, 0x78 },                      0 }, // Driver timing control A
+    { 0xEA, 2, { 0x00, 0x00 },                            0 }, // Driver timing control B
+    { 0xED, 4, { 0x64, 0x03, 0x12, 0x81 },                0 }, // Power-on sequence control
+    { 0xF7, 1, { 0x20 },                                  0 }, // Pump ratio control
+    { 0xC0, 1, { 0x23 },                                  0 }, // Power control 1 (VRH)
+    { 0xC1, 1, { 0x10 },                                  0 }, // Power control 2 (BT)
+    { 0xC5, 2, { 0x3E, 0x28 },                            0 }, // VCOM control 1
+    { 0xC7, 1, { 0x86 },                                  0 }, // VCOM control 2
+    { ILI9341_COLMOD, 1, { 0x55 },                        0 }, // 16 bpp, RGB565
+    { ILI9341_MADCTL, 1, { 0x20 },                        0 }, // RGB, 180 deg rotation
+    { 0xB1, 2, { 0x00, 0x10 },                            0 }, // Frame rate ~119 Hz (max); use 0x18 (~79 Hz) if unstable
+    { 0xB6, 3, { 0x08, 0x82, 0x27 },                      0 }, // Display function control (320 lines)
+    { 0xF2, 1, { 0x00 },                                  0 }, // 3-gamma disable
+    { 0x26, 1, { 0x01 },                                  0 }, // Gamma curve 1
+    { 0xE0, 15, { 0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E, 0xF1,
+                  0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00 }, 0 }, // Positive gamma
+    { 0xE1, 15, { 0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1,
+                  0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F }, 0 }, // Negative gamma
+    { ILI9341_SLPOUT, 0, { 0 },                         120 }, // Sleep out, then supply/clock settle
+    { ILI9341_DISPON, 0, { 0 },                          20 }, // Display on
+};
+
+void ili9341_init(void){
+    // Peripherals: SPI link, uDMA pixel pump, and the ADC/PWM backlight control.
     spi2_config();
-    // uDMA //
     uDMA_spi2_config();
-    // Backlight brightness control (ADC input -> PWM duty), provided by the display driver.
     adc0ssq3_config();
     pwm0_config();
-    ili9341_enable();
+
+    // Hardware reset (reloads factory defaults; includes the required delays).
     ili9341_reset();
-    // Change to 8bit len to send commands
+
+    // Commands and their parameters are single bytes.
     spi2_data_len(8);
-    ili9341_send_command(0x01); // Software reset
-    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
-    ili9341_send_command(0x11); // Sleep out
-    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
-    ili9341_send_command(0x3A); // Pixel Format
-    ili9341_send_data(0x55); // RGB565
-    ili9341_send_command(0x36); // MADCTL
-    ili9341_send_data(0xC0); // RGB, 180 degrees rotation
-    ili9341_send_command(0x29);
-    ili9341_disable();
-    // Change to 16 bit len for send pixels data
+
+    uint32_t i;
+    uint8_t  a;
+    for (i = 0; i < sizeof(ili9341_init_seq) / sizeof(ili9341_init_seq[0]); i++){
+        const ILI9341_InitCmd *c = &ili9341_init_seq[i];
+        ili9341_send_command(c->cmd);
+        for (a = 0; a < c->numArgs; a++)
+            ili9341_send_data(c->args[a]);
+        if (c->delayMs)
+            delay_ms(c->delayMs);
+    }
+
+    // Switch to 16-bit frames for fast pixel streaming via uDMA.
     spi2_data_len(16);
-    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
 }
 
 void ili9341_set_window(uint16_t x0, uint16_t y0,uint16_t x1, uint16_t y1){
     // Config spi2 to send command and data configuration
     spi2_data_len(8);
     // Column Address Set (CASET)
-    ili9341_send_command(0x2A);
+    ili9341_send_command(ILI9341_CASET);
     ili9341_send_data(x0 >> 8);     // X start high
     ili9341_send_data(x0 & 0xFF);   // X start low
     ili9341_send_data(x1 >> 8);     // X end high
     ili9341_send_data(x1 & 0xFF);   // X end low
 
     // Page Address Set (PASET)
-    ili9341_send_command(0x2B);
+    ili9341_send_command(ILI9341_PASET);
     ili9341_send_data(y0 >> 8);     // Y start high
     ili9341_send_data(y0 & 0xFF);   // Y start low
     ili9341_send_data(y1 >> 8);     // Y end high
     ili9341_send_data(y1 & 0xFF);   // Y end low
 
     // Write to RAM
-    ili9341_send_command(0x2C);
+    ili9341_send_command(ILI9341_RAMWR);
     // Config spi3 to send pixels data
     spi2_data_len(16);
     
