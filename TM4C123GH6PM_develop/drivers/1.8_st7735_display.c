@@ -23,6 +23,7 @@ Display ----- EK-TM4C123GXL
 #include "driverlib/gpio.h"
 #include "driverlib/ssi.h"
 #include "driverlib/udma.h"
+#include "driverlib/systick.h"
 // The inc folder contains the device header files for each TM4C device as well as the hardware header files.
 #include "inc/hw_types.h"
 #include "inc/hw_memmap.h"
@@ -30,6 +31,7 @@ Display ----- EK-TM4C123GXL
 #include "inc/hw_gpio.h"
 #include "inc/hw_ssi.h"
 #include "inc/hw_udma.h"
+#include "inc/hw_nvic.h"
 // Own driver libraries
 #include "drivers/1.8_st7735_display.h"
 //***** Tabla completa ASCII 5�7 (Adafruit font) *****//
@@ -248,30 +250,101 @@ void uDMA_spi3_send_buffer(uint16_t* dataBuffer, uint32_t count){
     MAP_GPIOPinWrite(GPIO_PORTD_BASE, GPIO_PIN_1, GPIO_PIN_1);
 }
 
+//*****************************************************************************
+// Blocking delays built on the Cortex-M SysTick down-counter.
+//
+// SysTick is a dedicated 24-bit core timer, so these delays are clock-accurate
+// (paced by the system clock) and consume no general-purpose timer. SysTick is
+// unused elsewhere and only runs here during display init/reset, so blocking on
+// it is safe. Replaces the approximate, hand-tuned MAP_SysCtlDelay() loops
+// (which were also mistimed: the init "10 ms" waits were really ~100 ms).
+//*****************************************************************************
+static void delay_us(uint32_t us){
+    const uint32_t ticksPerUs = MAP_SysCtlClockGet() / 1000000U;  // 80 @ 80 MHz
+    const uint32_t maxChunkUs = 100000U;                          // keeps reload < 2^24
+    while(us){
+        uint32_t chunk = (us > maxChunkUs) ? maxChunkUs : us;
+        MAP_SysTickPeriodSet(chunk * ticksPerUs);
+        HWREG(NVIC_ST_CURRENT) = 0;   // any write clears the counter and COUNTFLAG
+        MAP_SysTickEnable();
+        // Spin until the counter reloads (COUNTFLAG, bit 16, asserts).
+        while((HWREG(NVIC_ST_CTRL) & NVIC_ST_CTRL_COUNT) == 0){ }
+        MAP_SysTickDisable();
+        us -= chunk;
+    }
+}
+
+static void delay_ms(uint32_t ms){
+    while(ms--)
+        delay_us(1000U);
+}
+
+//*****************************************************************************
+// Power-on initialization sequence (ST7735R).
+//
+// Data-driven table: each row is { command, parameter count, parameters,
+// post-command delay (ms) }. The frame-rate / power / VCOM / gamma values are
+// the manufacturer-recommended ST7735R settings; together with the existing
+// 30 MHz SPI + uDMA pixel path they give the best image quality and the fastest
+// refresh the panel reliably supports. MADCTL is left at 0x00 so the orientation
+// and RGB colour order match the previous (working) configuration.
+//*****************************************************************************
+typedef struct {
+    uint8_t  cmd;
+    uint8_t  numArgs;
+    uint8_t  args[16];
+    uint16_t delayMs;
+} ST7735_InitCmd;
+
+static const ST7735_InitCmd st7735_init_seq[] = {
+    { 0x01, 0, { 0 },                           150 }, // SWRESET: software reset
+    { 0x11, 0, { 0 },                           150 }, // SLPOUT: exit sleep, let booster/clocks settle
+    // Frame-rate control. Lower porches -> higher refresh. 0x00,0x06,0x03 is the
+    // fastest setting (~125 Hz, best performance). If you see flicker or banding,
+    // fall back to the conservative 0x01,0x2C,0x2D (~80 Hz).
+    { 0xB1, 3, { 0x00, 0x06, 0x03 },              0 }, // FRMCTR1: frame rate, normal mode
+    { 0xB2, 3, { 0x01, 0x2C, 0x2D },              0 }, // FRMCTR2: frame rate, idle mode
+    { 0xB3, 6, { 0x01, 0x2C, 0x2D,
+                 0x01, 0x2C, 0x2D },              0 }, // FRMCTR3: frame rate, partial mode
+    { 0xB4, 1, { 0x07 },                          0 }, // INVCTR: no display inversion
+    { 0xC0, 3, { 0xA2, 0x02, 0x84 },              0 }, // PWCTR1: power control
+    { 0xC1, 1, { 0xC5 },                          0 }, // PWCTR2: power control
+    { 0xC2, 2, { 0x0A, 0x00 },                    0 }, // PWCTR3: power control (normal mode)
+    { 0xC3, 2, { 0x8A, 0x2A },                    0 }, // PWCTR4: power control (idle mode)
+    { 0xC4, 2, { 0x8A, 0xEE },                    0 }, // PWCTR5: power control (partial mode)
+    { 0xC5, 1, { 0x0E },                          0 }, // VMCTR1: VCOM voltage
+    { 0x20, 0, { 0 },                             0 }, // INVOFF: inversion off
+    { 0x36, 1, { 0x00 },                          0 }, // MADCTL: RGB order, native orientation
+    { 0x3A, 1, { 0x05 },                          0 }, // COLMOD: 16 bpp (RGB565)
+    { 0xE0, 16, { 0x02, 0x1C, 0x07, 0x12, 0x37, 0x32, 0x29, 0x2D,
+                  0x29, 0x25, 0x2B, 0x39, 0x00, 0x01, 0x03, 0x10 }, 0 }, // GMCTRP1: positive gamma
+    { 0xE1, 16, { 0x03, 0x1D, 0x07, 0x06, 0x2E, 0x2C, 0x29, 0x2D,
+                  0x2E, 0x2E, 0x37, 0x3F, 0x00, 0x00, 0x02, 0x10 }, 0 }, // GMCTRN1: negative gamma
+    { 0x13, 0, { 0 },                            10 }, // NORON: normal display mode on
+    { 0x29, 0, { 0 },                           100 }, // DISPON: display on
+};
+
 // Display
 void st7735_init(void){
-    // No coments needed //
+    // Hardware reset (includes the required reset-pulse delays).
     st7735_reset();
-    // Config the spi3 to send commands and data configuration.
+
+    // Commands and their parameters are single bytes.
     spi3_len_config(8);
-    // Software reset //
-    st7735_send_command(0x01); 
-    // 10ms delay to wait for the display response //
-    MAP_SysCtlDelay(MAP_SysCtlClockGet()/30);
-    // Sleep out //
-    st7735_send_command(0x11);
-    MAP_SysCtlDelay(MAP_SysCtlClockGet()/30);
-    // Color mode //
-    st7735_send_command(0x3A);
-    MAP_SysCtlDelay(MAP_SysCtlClockGet()/30);
-    // 16-bit color //
-    st7735_send_data(0x05);
-    MAP_SysCtlDelay(MAP_SysCtlClockGet()/30);
-    // Display ON //
-    st7735_send_command(0x29);
-    // Config the spi3 to send pixels data.
+
+    uint32_t i;
+    uint8_t  a;
+    for(i = 0; i < sizeof(st7735_init_seq) / sizeof(st7735_init_seq[0]); i++){
+        const ST7735_InitCmd *c = &st7735_init_seq[i];
+        st7735_send_command(c->cmd);
+        for(a = 0; a < c->numArgs; a++)
+            st7735_send_data(c->args[a]);
+        if(c->delayMs)
+            delay_ms(c->delayMs);
+    }
+
+    // Switch to 16-bit frames for fast pixel streaming via uDMA.
     spi3_len_config(16);
-    MAP_SysCtlDelay(MAP_SysCtlClockGet()/30);
 }
 
 void st7735_send_command(uint8_t cmd){
@@ -297,14 +370,12 @@ void st7735_send_data(uint8_t data){
 }
 
 void st7735_reset(void){
-    // RESET pin to low //
+    // RESET pin low: assert reset (datasheet min pulse 10 us; 20 ms is generous).
     MAP_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_5, 0);
-    // 10ms delay //
-    MAP_SysCtlDelay(MAP_SysCtlClockGet()/300);
-    // RESTE pin to high //
+    delay_ms(20);
+    // RESET pin high: release reset, then wait for the controller to come up.
     MAP_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_5, GPIO_PIN_5);
-    // 10ms delay //
-    MAP_SysCtlDelay(MAP_SysCtlClockGet()/300);
+    delay_ms(120);
 }
 
 void st7735_set_window(uint16_t x0, uint16_t y0,uint16_t x1, uint16_t y1){

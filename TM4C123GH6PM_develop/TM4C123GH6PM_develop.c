@@ -70,11 +70,10 @@ int main(void)
     spi3_config();
     uDMA_spi3_config();
 
-    // Enable interrupts globally
-    MAP_IntMasterEnable();
-
     // Init display module
     st7735_init();
+    // Enable interrupts globally
+    MAP_IntMasterEnable();
     // Fille the screen
     st7735_fill_screen(BLACK);
     st7735_print_string(0, 0, "TivaC: TM4C123GH6PM", RED, BLACK);
