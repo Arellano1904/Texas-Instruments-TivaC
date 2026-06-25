@@ -1,6 +1,8 @@
 //*****************************************************************************
 // 2.4_tft_display, ILI9341_driver, tm4c1294_spi2_uDMA
 //*****************************************************************************
+#ifndef ILI9341_TM4C1294_H
+#define ILI9341_TM4C1294_H
 // Common used libraries.
 #include <stdint.h>
 #include <stdbool.h>
@@ -26,17 +28,28 @@
 #define WHITE       0xFFFF
 #define ORANGE      0xFD20
 #define GREENYELLOW 0xAFE5
-#define PINK        0xF81F
+#define PINK        0xFC18      // Distinct from MAGENTA (0xF81F)
 
+// Portrait orientation (panel native 240x320; MADCTL MV bit left clear).
 #define ILI9341_WIDTH   240
 #define ILI9341_HEIGHT  320
 #define ILI9341_LINES_PER_BUFFER 4
-#define ILI9341_CHUNKS_PER_FULL_SCREEN 80
+#define ILI9341_CHUNKS_PER_FULL_SCREEN 80   // ILI9341_HEIGHT / ILI9341_LINES_PER_BUFFER
 #define FONT_WIDTH   8
 #define FONT_HEIGHT 16
 #define FONT_FIRST_CHAR 0x20
 #define FONT_LAST_CHAR 0x7E
 #define FONT_FALLBACK    '?'
+
+//***** ILI9341 command set (subset used by this driver) *****//
+#define ILI9341_SWRESET 0x01   // Software reset
+#define ILI9341_SLPOUT  0x11   // Sleep out
+#define ILI9341_DISPON  0x29   // Display on
+#define ILI9341_CASET   0x2A   // Column address set
+#define ILI9341_PASET   0x2B   // Page address set
+#define ILI9341_RAMWR   0x2C   // Memory write
+#define ILI9341_MADCTL  0x36   // Memory access control
+#define ILI9341_COLMOD  0x3A   // Pixel format set
 
 // ClockFreq variable
 extern volatile uint32_t systemClkFreq;
@@ -62,7 +75,29 @@ void uDMA_spi2_send_buffer(uint16_t* dataBuffer, uint32_t bufferLen);
 // spi2 FOR DISPLAY //
 void spi2_config(void);
 void spi2_data_len(uint32_t len);
-// Funciones de apoyo
-static void intToStr(int32_t value, char *buf);
-static void floatToStr(float value, char *buf, uint8_t decimals);
+
+//*****************************************************************************
+// //***** Backlight brightness control (ADC + PWM) *****//
+//*****************************************************************************
+// The backlight is driven by M0PWM2 (PF2); its duty cycle sets the brightness.
+// A control voltage on AIN0 (PE3) is sampled by ADC0 sequencer 3, whose ISR
+// maps the 0..4095 reading onto the PWM duty cycle.
+//
+// ADC counts -> volts (VDDA = 3.3 V reference, 12-bit result).
+#define ADC_SCALE (3.3f / 4095.0f)
+
+// Brightness-control state (defined in ili9341_tm4c1294.c).
+extern volatile uint32_t adc0Ssq3Value; // Latest raw ADC0 SS3 sample (0..4095)
+extern volatile uint8_t adc_ready;   // Set by the ADC ISR; cleared by consumer
+extern volatile float fDutyCycle;    // Backlight duty cycle (0.0..1.0)
+
+// Setup helpers — call after systemClkFreq has been set.
+void adc0ssq3_config(void);          // Configure ADC0 SS3 (AIN0/PE3)
+void adc0ssq3_handler(void);         // ADC0 SS3 ISR (placed in the vector table)
+void pwm0_config(void);              // Configure the M0PWM2/PF2 backlight output
+
+// Note: intToStr()/floatToStr() are internal helpers with static linkage,
+// defined privately in ili9341_tm4c1294.c (not part of the public API).
+
+#endif // ILI9341_TM4C1294_H
 

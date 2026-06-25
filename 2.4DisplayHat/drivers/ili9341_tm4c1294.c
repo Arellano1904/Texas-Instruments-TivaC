@@ -12,6 +12,8 @@
 #include "inc/hw_gpio.h"
 #include "inc/hw_ssi.h"
 #include "inc/hw_udma.h"
+#include "inc/hw_ints.h"
+#include "inc/hw_nvic.h"
 // The driverlib folder contains the TivaWare Driver Library (DriverLib) source code that allows users to leverage TI validated functions.
 #include "driverlib/rom_map.h"
 #include "driverlib/sysctl.h"
@@ -19,8 +21,19 @@
 #include "driverlib/ssi.h"
 #include "driverlib/gpio.h"
 #include "driverlib/udma.h"
+#include "driverlib/interrupt.h"
+#include "driverlib/pwm.h"
+#include "driverlib/adc.h"
+#include "driverlib/systick.h"
 
-// Fonts for display 
+// Internal string helpers (private to this translation unit).
+static void intToStr(int32_t value, char *buf);
+static void floatToStr(float value, char *buf, uint8_t decimals);
+// Blocking delays (private; SysTick-based).
+static void delay_us(uint32_t us);
+static void delay_ms(uint32_t ms);
+
+// Fonts for display
 static const unsigned char font8x16[][16] = { 
         { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  },       //0x20, ' '
         { 0x00, 0x00, 0x18, 0x3C, 0x3C, 0x3C, 0x18, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,  },       //0x21, '!'
@@ -124,6 +137,35 @@ static const unsigned char font8x16[][16] = {
 uint8_t uDMAControlTable[1024];
 static uint16_t colorBufer[ILI9341_WIDTH * ILI9341_LINES_PER_BUFFER];
 static uint16_t g_ui16CharBuf[FONT_WIDTH * FONT_HEIGHT];
+
+//*****************************************************************************
+// Blocking delays built on the Cortex-M SysTick down-counter.
+//
+// SysTick is a dedicated 24-bit core timer, so these delays are clock-accurate
+// (paced by systemClkFreq) and consume no general-purpose timer. It is unused
+// elsewhere and only runs at boot during display init/reset, so blocking on it
+// is safe. Replaces the approximate, hand-tuned MAP_SysCtlDelay() loops.
+//*****************************************************************************
+static void delay_us(uint32_t us){
+    const uint32_t ticksPerUs = systemClkFreq / 1000000U;  // 120 @ 120 MHz
+    const uint32_t maxChunkUs = 100000U;                   // keeps reload < 2^24
+    while (us){
+        uint32_t chunk = (us > maxChunkUs) ? maxChunkUs : us;
+        MAP_SysTickPeriodSet(chunk * ticksPerUs);
+        HWREG(NVIC_ST_CURRENT) = 0;   // any write clears the counter and COUNTFLAG
+        MAP_SysTickEnable();
+        // Spin until the counter reloads (COUNTFLAG, bit 16, asserts).
+        while ((HWREG(NVIC_ST_CTRL) & NVIC_ST_CTRL_COUNT) == 0){ }
+        MAP_SysTickDisable();
+        us -= chunk;
+    }
+}
+
+static void delay_ms(uint32_t ms){
+    while (ms--)
+        delay_us(1000U);
+}
+
 // DISPLAY //
 void ili9341_enable(void){
     MAP_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_0 , 0x00);
@@ -139,20 +181,20 @@ void ili9341_data_mode(void){
 }
 
 void ili9341_reset(void){
-    // PE2 to low for reset.
+    // Assert RESX low (datasheet min 10 us; 10 ms gives generous margin).
     MAP_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_2, 0x00);
-    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
-    // PE2 high
+    delay_ms(10);
+    // Release reset; the controller reloads its factory defaults.
     MAP_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_2, GPIO_PIN_2);
-    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
+    delay_ms(120); // datasheet: wait before the first command
 }
 
 void ili9341_send_command(uint8_t cmd){
     ili9341_enable();
     ili9341_cmd_mode();
-    // Send the command trough SPI1
+    // Send the command through SSI2
     MAP_SSIDataPut(SSI2_BASE, cmd);
-    // Wait for data to be tansfered
+    // Wait for data to be transferred
     while(MAP_SSIBusy(SSI2_BASE));
     ili9341_disable();
 }
@@ -160,56 +202,101 @@ void ili9341_send_command(uint8_t cmd){
 void ili9341_send_data(uint8_t data){
     ili9341_enable();
     ili9341_data_mode();
-    // Send the data to the spi2
+    // Send the data to SSI2
     MAP_SSIDataPut(SSI2_BASE, data);
-    // Wait for data to be tansfered
+    // Wait for data to be transferred
     while(MAP_SSIBusy(SSI2_BASE));
     ili9341_disable();
 }
 
-void ili9341_init(void){ 
-    // Spi2 //
+//*****************************************************************************
+// Power-on initialization sequence.
+//
+// Data-driven table: each row is { command, parameter count, parameters,
+// post-command delay (ms) }. The power/VCOM/gamma registers are the
+// manufacturer-recommended ILI9341 values; together with the 119 Hz frame
+// rate (FRMCTR1) and the existing 30 MHz SPI + uDMA path they give the best
+// image quality and the fastest refresh the panel supports.
+//*****************************************************************************
+typedef struct {
+    uint8_t  cmd;
+    uint8_t  numArgs;
+    uint8_t  args[15];
+    uint16_t delayMs;
+} ILI9341_InitCmd;
+
+static const ILI9341_InitCmd ili9341_init_seq[] = {
+    { 0xCB, 5, { 0x39, 0x2C, 0x00, 0x34, 0x02 },          0 }, // Power control A
+    { 0xCF, 3, { 0x00, 0xC1, 0x30 },                      0 }, // Power control B
+    { 0xE8, 3, { 0x85, 0x00, 0x78 },                      0 }, // Driver timing control A
+    { 0xEA, 2, { 0x00, 0x00 },                            0 }, // Driver timing control B
+    { 0xED, 4, { 0x64, 0x03, 0x12, 0x81 },                0 }, // Power-on sequence control
+    { 0xF7, 1, { 0x20 },                                  0 }, // Pump ratio control
+    { 0xC0, 1, { 0x23 },                                  0 }, // Power control 1 (VRH)
+    { 0xC1, 1, { 0x10 },                                  0 }, // Power control 2 (BT)
+    { 0xC5, 2, { 0x3E, 0x28 },                            0 }, // VCOM control 1
+    { 0xC7, 1, { 0x86 },                                  0 }, // VCOM control 2
+    { ILI9341_COLMOD, 1, { 0x55 },                        0 }, // 16 bpp, RGB565
+    { ILI9341_MADCTL, 1, { 0x20 },                        0 }, // RGB, 180 deg rotation
+    { 0xB1, 2, { 0x00, 0x10 },                            0 }, // Frame rate ~119 Hz (max); use 0x18 (~79 Hz) if unstable
+    { 0xB6, 3, { 0x08, 0x82, 0x27 },                      0 }, // Display function control (320 lines)
+    { 0xF2, 1, { 0x00 },                                  0 }, // 3-gamma disable
+    { 0x26, 1, { 0x01 },                                  0 }, // Gamma curve 1
+    { 0xE0, 15, { 0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E, 0xF1,
+                  0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00 }, 0 }, // Positive gamma
+    { 0xE1, 15, { 0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1,
+                  0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F }, 0 }, // Negative gamma
+    { ILI9341_SLPOUT, 0, { 0 },                         120 }, // Sleep out, then supply/clock settle
+    { ILI9341_DISPON, 0, { 0 },                          20 }, // Display on
+};
+
+void ili9341_init(void){
+    // Peripherals: SPI link, uDMA pixel pump, and the ADC/PWM backlight control.
     spi2_config();
-    // uDMA //
     uDMA_spi2_config();
-    ili9341_enable();
+    adc0ssq3_config();
+    pwm0_config();
+
+    // Hardware reset (reloads factory defaults; includes the required delays).
     ili9341_reset();
-    // Change to 8bit len to send commands
+
+    // Commands and their parameters are single bytes.
     spi2_data_len(8);
-    ili9341_send_command(0x01); // Software reset
-    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
-    ili9341_send_command(0x11); // Sleep out
-    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
-    ili9341_send_command(0x3A); // Pixel Format
-    ili9341_send_data(0x55); // RGB565
-    ili9341_send_command(0x36); // MADCTL
-    ili9341_send_data(0xC0); // RGB, 180 degrees rotation
-    ili9341_send_command(0x29);
-    ili9341_disable();
-    // Change to 16 bit len for send pixels data
+
+    uint32_t i;
+    uint8_t  a;
+    for (i = 0; i < sizeof(ili9341_init_seq) / sizeof(ili9341_init_seq[0]); i++){
+        const ILI9341_InitCmd *c = &ili9341_init_seq[i];
+        ili9341_send_command(c->cmd);
+        for (a = 0; a < c->numArgs; a++)
+            ili9341_send_data(c->args[a]);
+        if (c->delayMs)
+            delay_ms(c->delayMs);
+    }
+
+    // Switch to 16-bit frames for fast pixel streaming via uDMA.
     spi2_data_len(16);
-    MAP_SysCtlDelay((systemClkFreq / 3000) * 5); // ~5ms
 }
 
 void ili9341_set_window(uint16_t x0, uint16_t y0,uint16_t x1, uint16_t y1){
     // Config spi2 to send command and data configuration
     spi2_data_len(8);
     // Column Address Set (CASET)
-    ili9341_send_command(0x2A);
+    ili9341_send_command(ILI9341_CASET);
     ili9341_send_data(x0 >> 8);     // X start high
     ili9341_send_data(x0 & 0xFF);   // X start low
     ili9341_send_data(x1 >> 8);     // X end high
     ili9341_send_data(x1 & 0xFF);   // X end low
 
     // Page Address Set (PASET)
-    ili9341_send_command(0x2B);
+    ili9341_send_command(ILI9341_PASET);
     ili9341_send_data(y0 >> 8);     // Y start high
     ili9341_send_data(y0 & 0xFF);   // Y start low
     ili9341_send_data(y1 >> 8);     // Y end high
     ili9341_send_data(y1 & 0xFF);   // Y end low
 
     // Write to RAM
-    ili9341_send_command(0x2C);
+    ili9341_send_command(ILI9341_RAMWR);
     // Config spi3 to send pixels data
     spi2_data_len(16);
     
@@ -225,7 +312,7 @@ void ili9341_fill_screen(uint16_t color){
     ili9341_enable();
     ili9341_data_mode();
 
-    for (i = 0; i < (ILI9341_HEIGHT/ILI9341_LINES_PER_BUFFER); i++){
+    for (i = 0; i < ILI9341_HEIGHT; i+=ILI9341_LINES_PER_BUFFER){
         /*
          * Wait only for DMA done — NOT for SSIBusy.
          * The FIFO keeps clocking bits out in the background while we poll.
@@ -339,13 +426,16 @@ void ili9341_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fgColo
 } 
 
 void ili9341_print_int(uint16_t x, uint16_t y,int32_t num,uint16_t color, uint16_t bg){
-    char buf[12];
+    char buf[12];   // "-2147483648" + '\0' = 12 bytes
     intToStr(num, buf);
     ili9341_print_string(x,y,buf,color,bg);
 }
 
 void ili9341_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint16_t color, uint16_t bg){
-    char buf[12];
+    // '-' + up to 10 integer digits + '.' + decimals + '\0'.
+    // Clamp decimals so the result always fits the buffer.
+    char buf[24];
+    if (decimals > 9) decimals = 9;
     floatToStr(num, buf,decimals);
     ili9341_print_string(x,y,buf,color,bg);
 }
@@ -370,7 +460,7 @@ void spi2_config(void){
     MAP_GPIOPinConfigure(GPIO_PD0_SSI2XDAT1);
     MAP_GPIOPinTypeSSI(GPIO_PORTD_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_3 );
     ili9341_enable();
-    // Config QSSI1 module, master mode, 16bits len.
+    // Config QSSI2 module, master mode, 16bits len.
     MAP_SSIDisable(SSI2_BASE);
     SSIClockSourceSet(SSI2_BASE, SSI_CLOCK_SYSTEM);
     MAP_SSIConfigSetExpClk(SSI2_BASE, systemClkFreq, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,30000000, 16);
@@ -392,7 +482,7 @@ void uDMA_spi2_config(void){
     MAP_uDMAEnable();
     // Set base address of control table
     MAP_uDMAControlBaseSet(uDMAControlTable);
-    // Enable uDMA on SSI1 TX
+    // Enable uDMA on SSI2 TX
     MAP_SSIDMAEnable(SSI2_BASE, SSI_DMA_TX);
     // Optional but safe
     MAP_uDMAChannelAssign(UDMA_CH13_SSI2TX);
@@ -423,7 +513,7 @@ void uDMA_spi2_send_buffer(uint16_t* dataBuffer, uint32_t bufferLen){
 }
 
 // Funciones de apoyo
-void intToStr(int32_t value, char *buf){
+static void intToStr(int32_t value, char *buf){
     char tmp[12];
     int i = 0, j = 0;
 
@@ -452,19 +542,28 @@ void intToStr(int32_t value, char *buf){
     buf[j] = '\0';
 }
 
-void floatToStr(float value, char *buf, uint8_t decimals){
+static void floatToStr(float value, char *buf, uint8_t decimals){
     int32_t intPart;
     float frac;
-    int i = 0,j = 0;
+    int i = 0, j = 0;
+    uint8_t d;
 
-    if (value < 0)
+    if (value < 0.0f)
     {
         buf[i++] = '-';
         value = -value;
     }
 
+    // Round to the requested number of decimals so the last digit is correct
+    // (e.g. 1.999 with 2 decimals -> "2.00" instead of truncating to "1.99").
+    // The carry from rounding may also bump the integer part, so do it first.
+    float rounding = 0.5f;
+    for (d = 0; d < decimals; d++)
+        rounding *= 0.1f;
+    value += rounding;
+
     intPart = (int32_t)value;
-    frac = value - intPart;
+    frac = value - (float)intPart;
 
     // Integer part
     char intBuf[12];
@@ -473,16 +572,120 @@ void floatToStr(float value, char *buf, uint8_t decimals){
     for (j = 0; intBuf[j]; j++)
         buf[i++] = intBuf[j];
 
-    buf[i++] = '.';
-
-    // Fractional part
-    while (decimals--)
+    // Fractional part (only when decimals were requested)
+    if (decimals > 0)
     {
-        frac *= 10.0f;
-        int digit = (int)frac;
-        buf[i++] = digit + '0';
-        frac -= digit;
+        buf[i++] = '.';
+        while (decimals--)
+        {
+            frac *= 10.0f;
+            int digit = (int)frac;
+            if (digit > 9) digit = 9;       // guard against fp rounding to 10
+            buf[i++] = (char)('0' + digit);
+            frac -= digit;
+        }
     }
 
     buf[i] = '\0';
+}
+
+//*****************************************************************************
+// Backlight brightness control.
+//
+// The panel backlight is driven by M0PWM2 (PF2); its duty cycle sets the
+// brightness. A control voltage on AIN0 (PE3) is sampled by ADC0 sequencer 3,
+// and the ADC interrupt maps the reading (0..4095) onto the PWM duty cycle.
+// ADC0 SS3 is triggered by PWM generator 1, so conversions are paced by the
+// backlight PWM itself.
+//*****************************************************************************
+#define PWM_FREQ 20000U   // Backlight PWM frequency (Hz)
+
+// Latest raw ADC0 SS3 sample (0..4095). Written by the ISR, read by the app.
+volatile uint32_t adc0Ssq3Value = 0x0000;
+// Set to 1 by the ADC ISR when a new sample is ready; cleared by the consumer.
+volatile uint8_t adc_ready = 0x00;
+// Backlight duty cycle, 0.0..1.0. Updated from the ADC reading in the ISR.
+volatile float fDutyCycle = 0.50f;   // 50%
+// PWM period in clock ticks, computed at runtime from the system clock.
+static uint32_t pwmLoad = 0x0000;
+// PWM pulse width in clock ticks (derived from fDutyCycle).
+static uint32_t ui32Width = 0x0000;
+
+void adc0ssq3_config(void){
+    // Enable the ADC module and related peripheral
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_ADC0);
+    // Wait for the ADC0 module to be ready
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_ADC0));
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOE));
+    // Disable digital function on the pin
+    MAP_GPIOPinTypeADC(GPIO_PORTE_BASE, GPIO_PIN_3);
+    // Config ADC clock
+    ADCClockConfigSet(ADC0_BASE,ADC_CLOCK_SRC_PLL | ADC_CLOCK_RATE_FULL,12);
+    // Use VDDA (3.3 V)
+    MAP_ADCReferenceSet(ADC0_BASE, ADC_REF_INT);
+    // Configure ADC oversampling
+    MAP_ADCHardwareOversampleConfigure(ADC0_BASE, 0);
+    // Disable sequencer 3 during config
+    MAP_ADCSequenceDisable(ADC0_BASE, 3);
+    // Enable the first sample sequencer to capture the value of channel 0 when the processor trigger occurs
+    MAP_ADCSequenceConfigure(ADC0_BASE, 3, ADC_TRIGGER_PWM_MOD0 | ADC_TRIGGER_PWM1, 0);
+    // Configure sequencer steps
+    MAP_ADCSequenceStepConfigure(ADC0_BASE, 3, 0,ADC_CTL_IE | ADC_CTL_END | ADC_CTL_CH0);
+    // Clear ADC0 Sequencer 3 interrupt
+    MAP_ADCIntClear(ADC0_BASE, 3);
+    // Enable ADC0 Sequencer 3 interrupt
+    MAP_ADCIntEnable(ADC0_BASE, 3);
+    // Enable interrupt in NVIC
+    MAP_IntEnable(INT_ADC0SS3);
+    // Enable ADC sequencer
+    MAP_ADCSequenceEnable(ADC0_BASE, 3);
+
+}
+// ADC0 Sequencer 3 interrupt handler
+void adc0ssq3_handler(void){
+    uint32_t sample = 0;
+    // ALWAYS clear first, before reading
+    MAP_ADCIntClear(ADC0_BASE, 3);
+    // Read ADC result into a non-volatile local, then publish it (avoids
+    // passing a volatile pointer to the DriverLib API).
+    MAP_ADCSequenceDataGet(ADC0_BASE, 3, &sample);
+    adc0Ssq3Value = sample;
+    // Update PWM duty cycle based on ADC reading (0-4095 -> 0-100%)
+    fDutyCycle = (float)sample / 4095.0f;
+    ui32Width  = (uint32_t)(pwmLoad * fDutyCycle);
+    // Clamp: PWM hardware requires 1 <= width <= (pwmLoad - 1)
+    // If width == 0 or >= pwmLoad the comparator never fires -> output glitches
+    if(ui32Width < 1)           ui32Width = 1;
+    if(ui32Width > pwmLoad - 1) ui32Width = pwmLoad - 1;
+    MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_2, ui32Width);
+    // Signal main loop that a new ADC value is ready
+    adc_ready = 0x01;
+}
+
+void pwm0_config(void){
+    // Enabling and waiting for related peripheral
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_PWM0);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_PWM0));
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF));
+    // Configure pin PM3 as PWM output
+    MAP_GPIOPinConfigure(GPIO_PF2_M0PWM2);
+    MAP_GPIOPinTypePWM(GPIO_PORTF_BASE, GPIO_PIN_2);
+    // Config PWM module clock
+    MAP_PWMClockSet(PWM0_BASE, PWM_SYSCLK_DIV_2);
+    // PWM period in ticks, derived from the system clock (PWM_SYSCLK_DIV_2 halves it)
+    pwmLoad = (systemClkFreq / 2U) / PWM_FREQ;
+    // Config PWM generator
+    MAP_PWMGenConfigure(PWM0_BASE,PWM_GEN_1,PWM_GEN_MODE_UP_DOWN | PWM_GEN_MODE_NO_SYNC | PWM_GEN_MODE_DBG_STOP);
+    // Enable PWM triger output
+    PWMGenIntTrigEnable(PWM0_BASE, PWM_GEN_1, PWM_TR_CNT_ZERO);
+    // Set PWM period
+    MAP_PWMGenPeriodSet(PWM0_BASE,PWM_GEN_1,pwmLoad);
+    // Set PWM pulse width
+    ui32Width = (uint32_t)(pwmLoad * fDutyCycle);
+    MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_2, ui32Width);
+    // Enable PWM output
+    MAP_PWMOutputState(PWM0_BASE, PWM_OUT_2_BIT, true);
+    MAP_PWMGenEnable(PWM0_BASE, PWM_GEN_1);
 }
