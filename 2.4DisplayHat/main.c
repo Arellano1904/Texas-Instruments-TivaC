@@ -124,12 +124,13 @@ void buttons_ints_handler(void){
     MAP_GPIOIntClear(GPIO_PORTJ_BASE, status);
     if(status & GPIO_PIN_0){// SW1 pressed
         sw1State = 0x01;
+        MAP_GPIOPinWrite(GPIO_PORTN_BASE, GPIO_PIN_0 ,GPIO_PIN_0);
         return;
     }
 
     if(status & GPIO_PIN_1){// SW2 pressed
         sw2State = 0x01;
-        MAP_GPIOPinWrite(GPIO_PORTN_BASE, GPIO_PIN_0 , GPIO_PIN_0);
+        MAP_GPIOPinWrite(GPIO_PORTN_BASE, GPIO_PIN_0 ,0x00);
         return;
     }
 }

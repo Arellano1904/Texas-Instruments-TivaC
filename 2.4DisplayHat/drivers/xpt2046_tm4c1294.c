@@ -22,15 +22,15 @@
 // XPT2046 control bytes: start=1, channel select, MODE=0 (12-bit),
 // SER/DFR=0 (differential), PD1:PD0=00 (power down between conversions so
 // PENIRQ stays enabled).
-#define XPT2046_CMD_X       0x90    // X position (A2:A0 = 101)
-#define XPT2046_CMD_Y       0xD0    // Y position (A2:A0 = 001)
+#define XPT2046_CMD_X       0x90    // X position (A2:A0 = 001)
+#define XPT2046_CMD_Y       0xD0    // Y position (A2:A0 = 101)
 // Samples averaged per axis to suppress jitter.
 #define XPT2046_SAMPLES     8
 // Raw 12-bit ADC values seen at the panel edges. Calibrate these per unit.
-#define XPT2046_X_MIN       200
-#define XPT2046_X_MAX       3900
-#define XPT2046_Y_MIN       200
-#define XPT2046_Y_MAX       3900
+#define XPT2046_X_MIN       20
+#define XPT2046_X_MAX       4076
+#define XPT2046_Y_MIN       20
+#define XPT2046_Y_MAX       4076
 // Active area of the 2.4" panel in the current (portrait) orientation.
 #define XPT2046_SCREEN_W    240
 #define XPT2046_SCREEN_H    320
@@ -83,6 +83,11 @@ void xpt2046_request_coordinates(void){
     uint32_t flush;
     uint16_t raw_x, raw_y;
 
+    // Reading the controller makes PENIRQ pulse, which would otherwise queue a
+    // spurious touch interrupt and keep touch_asserted stuck set. Mask PL2 for
+    // the duration of the transfer.
+    MAP_GPIOIntDisable(GPIO_PORTL_BASE, GPIO_PIN_2);
+
     xpt2046_enable();                                       // CS low
     while(MAP_SSIDataGetNonBlocking(SSI2_BASE, &flush)){}   // drop stale RX data
 
@@ -91,6 +96,10 @@ void xpt2046_request_coordinates(void){
 
     while(MAP_SSIBusy(SSI2_BASE)){}                         // let the last frame finish
     xpt2046_disable();                                      // CS high
+
+    // Discard the glitch the read produced, then re-arm the touch interrupt.
+    MAP_GPIOIntClear(GPIO_PORTL_BASE, GPIO_PIN_2);
+    MAP_GPIOIntEnable(GPIO_PORTL_BASE, GPIO_PIN_2);
 
     // Portrait-flipped panel: both axes run opposite to the raw ADC sweep, so
     // invert each mapped result. Adjust the *_MIN/*_MAX limits during
