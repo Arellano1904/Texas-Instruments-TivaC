@@ -21,14 +21,17 @@
 #include "inc/hw_gpio.h"
 #include "inc/hw_ints.h"
 // Own driver libraries
-#include "drivers/1.8_st7735_display.h"
+#include "drivers/ili9341_tm4c123G.h"
 
 //*****************************************************************************
 // Useful definitions.
 //*****************************************************************************
 
 //***** Flags variables *****//
+volatile uint32_t systemClkFreq = 0x00000000; // System clock freq.
 uint8_t sw1State, sw2State = 0x00;
+volatile uint8_t touch_asserted = 0x00;
+
 
 //*****************************************************************************
 // The error routine that is called if the driver library encounters an error.
@@ -59,7 +62,7 @@ int main(void)
 {
     // Setup the system clock to run at 80 Mhz from PLL with crystal reference
     MAP_SysCtlClockSet(SYSCTL_SYSDIV_2_5|SYSCTL_USE_PLL|SYSCTL_XTAL_16MHZ|SYSCTL_OSC_MAIN);
-    
+    systemClkFreq = MAP_SysCtlClockGet();
     // Floating point unit enabling //
     MAP_FPUEnable();
     MAP_FPULazyStackingEnable();
@@ -67,17 +70,18 @@ int main(void)
     // Invoque configuration functions
     buttons_config();
     rgb_led_config();
-    spi3_config();
-    uDMA_spi3_config();
-
-    // Init display module
-    st7735_init();
+    // Initi display 
+    ili9341_init();
+    // xpt2046_init();
     // Enable interrupts globally
     MAP_IntMasterEnable();
     // Fille the screen
-    st7735_fill_screen(BLACK);
-    st7735_print_string(0, 0, "TivaC: TM4C123GH6PM", RED, BLACK);
-    st7735_print_string(0, 10, "1.8SpiDisplay: ST7735", RED, BLACK);
+    ili9341_fill_screen(BLACK);
+    ili9341_print_string(0, 0, "TivaC: EK-TM4C123GXL", RED, BLACK);
+    ili9341_print_string(0, 16, "2.4SpiDisplay:ILI9341-240x320", RED, BLACK);
+    // Static labels for the touch readout.
+    ili9341_print_string(0, 40, "Touch X:", GREEN, BLACK);
+    ili9341_print_string(0, 56, "Touch Y:", GREEN, BLACK);
     // Loop Forever
     while(1)
     {
