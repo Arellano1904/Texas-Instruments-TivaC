@@ -19,8 +19,27 @@
 //*****************************************************************************
 // //***** Definitions *****//
 //*****************************************************************************
+// XPT2046 control bytes: start=1, channel select, MODE=0 (12-bit),
+// SER/DFR=0 (differential), PD1:PD0=00 (power down between conversions so
+// PENIRQ stays enabled).
+#define XPT2046_CMD_X       0x90    // X position (A2:A0 = 101)
+#define XPT2046_CMD_Y       0xD0    // Y position (A2:A0 = 001)
+// Samples averaged per axis to suppress jitter.
+#define XPT2046_SAMPLES     8
+// Raw 12-bit ADC values seen at the panel edges. Calibrate these per unit.
+#define XPT2046_X_MIN       200
+#define XPT2046_X_MAX       3900
+#define XPT2046_Y_MIN       200
+#define XPT2046_Y_MAX       3900
+// Active area of the 2.4" panel in the current (portrait) orientation.
+#define XPT2046_SCREEN_W    240
+#define XPT2046_SCREEN_H    320
 
 extern volatile uint8_t touch_asserted;
+
+// Last touch position, in screen pixels (portrait-flipped 240x320 panel).
+volatile uint16_t touch_x = 0;
+volatile uint16_t touch_y = 0;
 
 //*****************************************************************************
 // //***** Functions definitions *****//
@@ -32,6 +51,53 @@ void xpt2046_enable(void){
 
 void xpt2046_disable(void){
     MAP_GPIOPinWrite(GPIO_PORTL_BASE, GPIO_PIN_0, GPIO_PIN_0);
+}
+// Clock one channel: a 16-bit command frame followed by a 16-bit frame that
+// shifts out the BUSY bit + the 12 data bits. The command sits in the low byte
+// so the leading zero byte acts as the start-bit gap; on the next frame the
+// result lands left-aligned, so (rx >> 3) drops BUSY and the 3 trailing bits.
+// Returns the averaged 0..4095 sample. CS is owned by the caller so several
+// channels can share a single assertion.
+static uint16_t xpt2046_read_raw(uint8_t cmd){
+    uint32_t rx;
+    uint32_t acc = 0;
+    uint8_t i;
+    for(i = 0; i < XPT2046_SAMPLES; i++){
+        MAP_SSIDataPut(SSI2_BASE, (uint16_t)cmd);   // send command
+        MAP_SSIDataGet(SSI2_BASE, &rx);             // discard command echo
+        MAP_SSIDataPut(SSI2_BASE, 0x0000);          // clock out the result
+        MAP_SSIDataGet(SSI2_BASE, &rx);
+        acc += (rx >> 3) & 0x0FFF;
+    }
+    return (uint16_t)(acc / XPT2046_SAMPLES);
+}
+
+// Linear map of a raw reading onto [0, out_max], clamped at the edges.
+static uint16_t xpt2046_scale(uint16_t raw, uint16_t in_min, uint16_t in_max, uint16_t out_max){
+    if(raw <= in_min){ return 0; }
+    if(raw >= in_max){ return out_max; }
+    return (uint16_t)(((uint32_t)(raw - in_min) * out_max) / (in_max - in_min));
+}
+
+void xpt2046_request_coordinates(void){
+    uint32_t flush;
+    uint16_t raw_x, raw_y;
+
+    xpt2046_enable();                                       // CS low
+    while(MAP_SSIDataGetNonBlocking(SSI2_BASE, &flush)){}   // drop stale RX data
+
+    raw_x = xpt2046_read_raw(XPT2046_CMD_X);
+    raw_y = xpt2046_read_raw(XPT2046_CMD_Y);
+
+    while(MAP_SSIBusy(SSI2_BASE)){}                         // let the last frame finish
+    xpt2046_disable();                                      // CS high
+
+    // Portrait-flipped panel: both axes run opposite to the raw ADC sweep, so
+    // invert each mapped result. Adjust the *_MIN/*_MAX limits during
+    // calibration; swap the channel->axis assignment if the panel is mounted
+    // rotated 90 degrees.
+    touch_x = (XPT2046_SCREEN_W - 1) - xpt2046_scale(raw_x, XPT2046_X_MIN, XPT2046_X_MAX, XPT2046_SCREEN_W - 1);
+    touch_y = (XPT2046_SCREEN_H - 1) - xpt2046_scale(raw_y, XPT2046_Y_MIN, XPT2046_Y_MAX, XPT2046_SCREEN_H - 1);
 }
 
 void xpt2046_init(void){

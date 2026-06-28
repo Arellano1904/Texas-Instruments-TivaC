@@ -75,11 +75,20 @@ int main(void){
     ili9341_fill_screen(BLACK);
     ili9341_print_string(0, 0, "TivaC: EK-TM4C1294XL", RED, BLACK);
     ili9341_print_string(0, 16, "2.4SpiDisplay:ILI9341-240x320", RED, BLACK);
+    // Static labels for the touch readout.
+    ili9341_print_string(0, 40, "Touch X:", GREEN, BLACK);
+    ili9341_print_string(0, 56, "Touch Y:", GREEN, BLACK);
     //***** Loop Forever *****//
     while(1){
         if(touch_asserted){ //Touch pressed
             touch_asserted = 0x00;
             MAP_GPIOPinWrite(GPIO_PORTN_BASE,GPIO_PIN_0,GPIO_PIN_0);
+            // Read the touch position and refresh the on-screen values.
+            xpt2046_request_coordinates();
+            ili9341_print_string(72, 40, "    ", BLACK, BLACK);   // clear stale digits
+            ili9341_print_int(72, 40, touch_x, WHITE, BLACK);
+            ili9341_print_string(72, 56, "    ", BLACK, BLACK);
+            ili9341_print_int(72, 56, touch_y, WHITE, BLACK);
         }
 
     }
