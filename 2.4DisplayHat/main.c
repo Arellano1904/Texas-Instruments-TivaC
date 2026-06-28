@@ -17,7 +17,7 @@
 #include "driverlib/interrupt.h"
 #include "driverlib/fpu.h"
 // ili9341DisplayDriver
-#include "ili9341_tm4c1294.h"
+#include "drivers/ili9341_tm4c1294.h"
 
 //*****************************************************************************
 // //***** The error routine that is called if the driver library encounters an error *****//
@@ -71,7 +71,7 @@ int main(void){
     ili9341_init();
     ili9341_fill_screen(BLACK);
     ili9341_print_string(0, 0, "TivaC: EK-TM4C1294XL", RED, BLACK);
-    ili9341_print_string(0, 16, "2.4SpiDisplay : ILI9341", RED, BLACK);
+    ili9341_print_string(0, 16, "2.4SpiDisplay:ILI9341-240x320", RED, BLACK);
     //***** Loop Forever *****//
     while(1){
         if(sw1State){ // SW1 pressed

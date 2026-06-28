@@ -3,9 +3,6 @@
 //*****************************************************************************
 // xpt2046_tm4c Touch Driver
 #include "xpt2046_tm4c1294.h"
-// Common used libraries.
-#include <stdio.h>
-#include <stdbool.h>
 // The inc folder contains the device header files for each TM4C device as well as the hardware header.
 #include "inc/hw_memmap.h"
 #include "inc/hw_types.h"
@@ -24,3 +21,4 @@
 //*****************************************************************************
 // //***** Functions definitions *****//
 //*****************************************************************************
+

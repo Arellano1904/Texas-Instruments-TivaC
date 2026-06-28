@@ -70,11 +70,11 @@ void ili9341_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fg,uin
 void ili9341_print_int(uint16_t x, uint16_t y,int32_t num,uint16_t color, uint16_t bg);
 void ili9341_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint16_t color, uint16_t bg);
 // uDMA //
-void uDMA_spi2_config(void);
-void uDMA_spi2_send_buffer(uint16_t* dataBuffer, uint32_t bufferLen);
+void uDMA_spi3_config(void);
+void uDMA_spi3_send_buffer(uint16_t* dataBuffer, uint32_t bufferLen);
 // spi2 FOR DISPLAY //
-void spi2_config(void);
-void spi2_data_len(uint32_t len);
+void spi3_config(void);
+void spi3_data_len(uint32_t len);
 
 //*****************************************************************************
 // //***** Backlight brightness control (ADC + PWM) *****//
