@@ -30,6 +30,7 @@
 // Extern functions which ared used for interruptions
 //*****************************************************************************
 extern void buttons_handler(void);
+extern void xpt2046_int_handler(void);
 //*****************************************************************************
 //
 // Forward declaration of the default fault handlers.
@@ -83,7 +84,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // The PendSV handler
     IntDefaultHandler,                      // The SysTick handler
     IntDefaultHandler,                      // GPIO Port A
-    IntDefaultHandler,                      // GPIO Port B
+    xpt2046_int_handler,                      // GPIO Port B
     IntDefaultHandler,                      // GPIO Port C
     IntDefaultHandler,                      // GPIO Port D
     IntDefaultHandler,                      // GPIO Port E

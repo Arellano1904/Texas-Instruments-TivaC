@@ -46,11 +46,11 @@ volatile uint16_t touch_y = 0;
 //*****************************************************************************
 
 void xpt2046_enable(void){
-    MAP_GPIOPinWrite(GPIO_PORTL_BASE, GPIO_PIN_0, 0x00);
+    MAP_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_0, 0x00);
 }
 
 void xpt2046_disable(void){
-    MAP_GPIOPinWrite(GPIO_PORTL_BASE, GPIO_PIN_0, GPIO_PIN_0);
+    MAP_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_0, GPIO_PIN_0);
 }
 // Clock one channel: a 16-bit command frame followed by a 16-bit frame that
 // shifts out the BUSY bit + the 12 data bits. The command sits in the low byte
@@ -63,10 +63,10 @@ static uint16_t xpt2046_read_raw(uint8_t cmd){
     uint32_t acc = 0;
     uint8_t i;
     for(i = 0; i < XPT2046_SAMPLES; i++){
-        MAP_SSIDataPut(SSI2_BASE, (uint16_t)cmd);   // send command
-        MAP_SSIDataGet(SSI2_BASE, &rx);             // discard command echo
-        MAP_SSIDataPut(SSI2_BASE, 0x0000);          // clock out the result
-        MAP_SSIDataGet(SSI2_BASE, &rx);
+        MAP_SSIDataPut(SSI0_BASE, (uint16_t)cmd);   // send command
+        MAP_SSIDataGet(SSI0_BASE, &rx);             // discard command echo
+        MAP_SSIDataPut(SSI0_BASE, 0x0000);          // clock out the result
+        MAP_SSIDataGet(SSI0_BASE, &rx);
         acc += (rx >> 3) & 0x0FFF;
     }
     return (uint16_t)(acc / XPT2046_SAMPLES);
@@ -86,20 +86,20 @@ void xpt2046_request_coordinates(void){
     // Reading the controller makes PENIRQ pulse, which would otherwise queue a
     // spurious touch interrupt and keep touch_asserted stuck set. Mask PL2 for
     // the duration of the transfer.
-    MAP_GPIOIntDisable(GPIO_PORTL_BASE, GPIO_PIN_2);
+    MAP_GPIOIntDisable(GPIO_PORTB_BASE, GPIO_PIN_2);
 
     xpt2046_enable();                                       // CS low
-    while(MAP_SSIDataGetNonBlocking(SSI2_BASE, &flush)){}   // drop stale RX data
+    while(MAP_SSIDataGetNonBlocking(SSI0_BASE, &flush)){}   // drop stale RX data
 
     raw_x = xpt2046_read_raw(XPT2046_CMD_X);
     raw_y = xpt2046_read_raw(XPT2046_CMD_Y);
 
-    while(MAP_SSIBusy(SSI2_BASE)){}                         // let the last frame finish
+    while(MAP_SSIBusy(SSI0_BASE)){}                         // let the last frame finish
     xpt2046_disable();                                      // CS high
 
     // Discard the glitch the read produced, then re-arm the touch interrupt.
-    MAP_GPIOIntClear(GPIO_PORTL_BASE, GPIO_PIN_2);
-    MAP_GPIOIntEnable(GPIO_PORTL_BASE, GPIO_PIN_2);
+    MAP_GPIOIntClear(GPIO_PORTB_BASE, GPIO_PIN_2);
+    MAP_GPIOIntEnable(GPIO_PORTB_BASE, GPIO_PIN_2);
 
     // Portrait-flipped panel: both axes run opposite to the raw ADC sweep, so
     // invert each mapped result. Adjust the *_MIN/*_MAX limits during
@@ -110,14 +110,14 @@ void xpt2046_request_coordinates(void){
 }
 
 void xpt2046_init(void){
-    spi2_config();
+    spi0_config();
 }
 
 void xpt2046_int_handler(void){
     // Read interrupt status from port L.
-    uint32_t int_status = MAP_GPIOIntStatus(GPIO_PORTL_BASE, true);
+    uint32_t int_status = MAP_GPIOIntStatus(GPIO_PORTB_BASE, true);
     // Clear interrupts immediately
-    MAP_GPIOIntClear(GPIO_PORTL_BASE, int_status);
+    MAP_GPIOIntClear(GPIO_PORTB_BASE, int_status);
     // Set touch flag
     if(int_status & GPIO_PIN_2){// Touch pressed
         touch_asserted = 0x01;
@@ -125,39 +125,43 @@ void xpt2046_int_handler(void){
     }
 }
 
-void spi2_config(){
-    // Enabling and wait for QSSI module and ports D and L to be ready
-    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI2);
-    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_SSI2));
-    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOD);
-    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOD));
-    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOL);
-    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOL));
-    // Configure pins for QSSI2
-    // {PD3:Clk,PL0:CS,PD1:MOSI,PD0:MISO,PL1:rst,PL2:int}
-    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTD_BASE,GPIO_PIN_1 | GPIO_PIN_3);
-    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTL_BASE,GPIO_PIN_0 | GPIO_PIN_1);
-    MAP_GPIOPinTypeGPIOInput(GPIO_PORTL_BASE,GPIO_PIN_2);
-    MAP_GPIOPinTypeGPIOInput(GPIO_PORTD_BASE,GPIO_PIN_0);
-    MAP_GPIOPinConfigure(GPIO_PB4_SSI2CLK);
-    MAP_GPIOPinConfigure(GPIO_PB7_SSI2TX);
-    MAP_GPIOPinConfigure(GPIO_PB6_SSI2RX);
-    MAP_GPIOPinTypeSSI(GPIO_PORTD_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_3 );
+void spi0_config(){
+    // Enable SSI0 plus the GPIO ports the touch controller spans:
+    //   Port A -> SSI0 data/clock lines, Port B -> CS / RESET / touch IRQ.
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI0);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_SSI0));
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOA));
+    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
+    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOB));
+    // SSI0 signals on Port A: {PA2:Clk, PA4:MISO(RX), PA5:MOSI(TX)}.
+    // Moved off SSI2/PB4-7 because the LaunchPad bridges PB6<->PD0 and
+    // PB7<->PD1 through R9/R10, which collide with the display's SSI3 CLK/CS.
+    MAP_GPIOPinConfigure(GPIO_PA2_SSI0CLK);
+    MAP_GPIOPinConfigure(GPIO_PA4_SSI0RX);
+    MAP_GPIOPinConfigure(GPIO_PA5_SSI0TX);
+    MAP_GPIOPinTypeSSI(GPIO_PORTA_BASE, GPIO_PIN_2 | GPIO_PIN_4 | GPIO_PIN_5);
+    // Side-band pins stay on Port B: {PB0:CS, PB1:rst, PB2:int}.
+    MAP_GPIOPinTypeGPIOOutput(GPIO_PORTB_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+    MAP_GPIOPinTypeGPIOInput(GPIO_PORTB_BASE, GPIO_PIN_2);
+    // Park CS high so the XPT2046 deselects and releases DOUT (high-Z) until
+    // a conversion is requested; otherwise it drives the shared MISO at boot.
+    MAP_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_0, GPIO_PIN_0);
     // Enable internal pull-ups for touch interrupt //
-    MAP_GPIOPadConfigSet(GPIO_PORTL_BASE,GPIO_PIN_2,GPIO_STRENGTH_2MA,GPIO_PIN_TYPE_STD_WPU);
+    MAP_GPIOPadConfigSet(GPIO_PORTB_BASE,GPIO_PIN_2,GPIO_STRENGTH_2MA,GPIO_PIN_TYPE_STD_WPU);
     // Disable interrupts during setup
-    MAP_GPIOIntDisable(GPIO_PORTL_BASE, GPIO_PIN_2);
-    MAP_GPIOIntClear(GPIO_PORTJ_BASE, GPIO_PIN_2);
+    MAP_GPIOIntDisable(GPIO_PORTB_BASE, GPIO_PIN_2);
+    MAP_GPIOIntClear(GPIO_PORTB_BASE, GPIO_PIN_2);
     // Configure interrupt type: falling edge
-    MAP_GPIOIntTypeSet(GPIO_PORTL_BASE,GPIO_PIN_2,GPIO_FALLING_EDGE);
+    MAP_GPIOIntTypeSet(GPIO_PORTB_BASE,GPIO_PIN_2,GPIO_FALLING_EDGE);
     // Enable GPIO interrupt (NVIC)
-    MAP_IntEnable(INT_GPIOL);
+    MAP_IntEnable(INT_GPIOB);
     // Enable GPIO pin interrupts
-    MAP_GPIOIntEnable(GPIO_PORTL_BASE, GPIO_PIN_2);
-    // Config QSSI2 module, master mode, 16bits len.
-    MAP_SSIDisable(SSI2_BASE);
-    SSIClockSourceSet(SSI2_BASE, SSI_CLOCK_SYSTEM);
-    MAP_SSIConfigSetExpClk(SSI2_BASE, systemClkFreq, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,2000000, 16);
-    MAP_SSIEnable(SSI2_BASE);
+    MAP_GPIOIntEnable(GPIO_PORTB_BASE, GPIO_PIN_2);
+    // Config SSI0 module, master mode, 16bits len.
+    MAP_SSIDisable(SSI0_BASE);
+    SSIClockSourceSet(SSI0_BASE, SSI_CLOCK_SYSTEM);
+    MAP_SSIConfigSetExpClk(SSI0_BASE, systemClkFreq, SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,2000000, 16);
+    MAP_SSIEnable(SSI0_BASE);
 }
 

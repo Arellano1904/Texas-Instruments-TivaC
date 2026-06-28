@@ -147,7 +147,7 @@ void spi2_config(){
     MAP_GPIOPadConfigSet(GPIO_PORTL_BASE,GPIO_PIN_2,GPIO_STRENGTH_2MA,GPIO_PIN_TYPE_STD_WPU);
     // Disable interrupts during setup
     MAP_GPIOIntDisable(GPIO_PORTL_BASE, GPIO_PIN_2);
-    MAP_GPIOIntClear(GPIO_PORTJ_BASE, GPIO_PIN_2);
+    MAP_GPIOIntClear(GPIO_PORTL_BASE, GPIO_PIN_2);
     // Configure interrupt type: falling edge
     MAP_GPIOIntTypeSet(GPIO_PORTL_BASE,GPIO_PIN_2,GPIO_FALLING_EDGE);
     // Enable GPIO interrupt (NVIC)

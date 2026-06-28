@@ -22,5 +22,5 @@ void xpt2046_disable(void);
 void xpt2046_request_coordinates(void);
 void xpt2046_int_handler(void);
 // SPI for xpt2046 driver
-void spi2_config(void);
+void spi0_config(void);
 

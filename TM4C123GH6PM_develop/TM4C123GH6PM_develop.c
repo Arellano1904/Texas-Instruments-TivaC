@@ -22,6 +22,7 @@
 #include "inc/hw_ints.h"
 // Own driver libraries
 #include "drivers/ili9341_tm4c123G.h"
+#include "drivers/xpt2046_tm4c123G.h"
 
 //*****************************************************************************
 // Useful definitions.
@@ -72,7 +73,7 @@ int main(void)
     rgb_led_config();
     // Initi display 
     ili9341_init();
-    // xpt2046_init();
+    xpt2046_init();
     // Enable interrupts globally
     MAP_IntMasterEnable();
     // Fille the screen
@@ -94,6 +95,19 @@ int main(void)
             sw2State = 0x00;
             // Turn blue led on.
             GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1 | GPIO_PIN_2, 0x04);
+        }
+        if(touch_asserted){ //Touch pressed
+            touch_asserted = 0x00;
+            // Visual touch indicator on the green LED (PF3). The original
+            // PORTN write was a leftover from the TM4C1294 port; the TM4C123
+            // has no Port N, so that access bus-faulted and locked the MCU.
+            MAP_GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_3, GPIO_PIN_3);
+            // Read the touch position and refresh the on-screen values.
+            xpt2046_request_coordinates();
+            ili9341_print_string(72, 40, "    ", BLACK, BLACK);   // clear stale digits
+            ili9341_print_int(72, 40, touch_x, WHITE, BLACK);
+            ili9341_print_string(72, 56, "    ", BLACK, BLACK);
+            ili9341_print_int(72, 56, touch_y, WHITE, BLACK);
         }
     }
 }
