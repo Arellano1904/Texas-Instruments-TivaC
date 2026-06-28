@@ -5,3 +5,17 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+// ClockFreq variable
+extern volatile uint32_t systemClkFreq;
+
+//*****************************************************************************
+// //***** Functions declarations *****//
+//*****************************************************************************
+// xpt2046 related functions
+void xpt2046_init(void);
+void xpt2046_enable(void);
+void xpt2046_disable(void);
+void xpt2046_int_handler(void);
+// SPI for xpt2046 driver
+void spi2_config(void);
+

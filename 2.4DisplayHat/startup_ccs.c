@@ -45,6 +45,7 @@ static void IntDefaultHandler(void);
 extern void _c_int00(void);
 extern void buttons_ints_handler(void);
 extern void adc0ssq3_handler(void);
+extern void xpt2046_int_handler(void);
 //*****************************************************************************
 //
 // Linker variable that marks the top of the stack.
@@ -132,7 +133,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // External Bus Interface 0
     buttons_ints_handler,                      // GPIO Port J
     IntDefaultHandler,                      // GPIO Port K
-    IntDefaultHandler,                      // GPIO Port L
+    xpt2046_int_handler,                       // GPIO Port L
     IntDefaultHandler,                      // SSI2 Rx and Tx
     IntDefaultHandler,                      // SSI3 Rx and Tx
     IntDefaultHandler,                      // UART3 Rx and Tx

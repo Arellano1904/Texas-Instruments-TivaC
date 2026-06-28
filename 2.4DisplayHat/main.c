@@ -18,6 +18,7 @@
 #include "driverlib/fpu.h"
 // ili9341DisplayDriver
 #include "drivers/ili9341_tm4c1294.h"
+#include "drivers/xpt2046_tm4c1294.h"
 
 //*****************************************************************************
 // //***** The error routine that is called if the driver library encounters an error *****//
@@ -50,6 +51,7 @@ void __error__(char *pcFilename, uint32_t ui32Line){}
 //*****************************************************************************
 volatile uint32_t systemClkFreq = 0x00000000; // System clock freq.
 volatile uint8_t sw1State, sw2State = 0x00;
+volatile uint8_t touch_asserted = 0x00;
 
 //*****************************************************************************
 // Main 'C' Language entry point.  Toggle an LED using TivaWare.
@@ -69,20 +71,17 @@ int main(void){
     MAP_IntMasterEnable();
     // Init display //
     ili9341_init();
+    xpt2046_init();
     ili9341_fill_screen(BLACK);
     ili9341_print_string(0, 0, "TivaC: EK-TM4C1294XL", RED, BLACK);
     ili9341_print_string(0, 16, "2.4SpiDisplay:ILI9341-240x320", RED, BLACK);
     //***** Loop Forever *****//
     while(1){
-        if(sw1State){ // SW1 pressed
-            sw1State = 0x0;
-            ili9341_print_int(0, 32, 1904, RED, BLACK);
+        if(touch_asserted){ //Touch pressed
+            touch_asserted = 0x00;
+            MAP_GPIOPinWrite(GPIO_PORTN_BASE,GPIO_PIN_0,GPIO_PIN_0);
         }
-        if(sw2State){// SW2 pressed
-            sw2State = 0x00;
-            ili9341_print_float(0, 48, 19.04f,2, RED, BLACK);
-            
-        }
+
     }
 }
 
@@ -121,6 +120,7 @@ void buttons_ints_handler(void){
 
     if(status & GPIO_PIN_1){// SW2 pressed
         sw2State = 0x01;
+        MAP_GPIOPinWrite(GPIO_PORTN_BASE, GPIO_PIN_0 , GPIO_PIN_0);
         return;
     }
 }
