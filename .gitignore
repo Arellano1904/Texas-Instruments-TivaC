@@ -1,0 +1,12 @@
+# Software and boards files
+EK-TM4C123GXL/Docs/
+EK-TM4C1294XL/Docs
+Software/
+
+# Develop folders
+TM4C1294NCPDT_develop/
+TM4C123GH6PM_develop/
+
+# Workspace folder
+.codex/
+.theia/
