@@ -4,9 +4,29 @@ EK-TM4C1294XL/Docs
 Software/
 
 # Develop folders
-TM4C1294NCPDT_develop/
-TM4C123GH6PM_develop/
+TM4C1294NCPDT_develop/Debug/
+TM4C1294NCPDT_develop/Release/
+TM4C1294NCPDT_develop/TargetConfigs/
+TM4C1294NCPDT_develop/.settings/
+TM4C1294NCPDT_develop/.ccsproject
+TM4C1294NCPDT_develop/.clangd
+TM4C1294NCPDT_develop/.cproject
+TM4C1294NCPDT_develop/.project
+TM4C1294NCPDT_develop/macros.ini_initial
+TM4C1294NCPDT_develop/target_config.ccxml
+
+TM4C123GH6PM_develop/Debug/
+TM4C123GH6PM_develop/Release/
+TM4C123GH6PM_develop/TargetConfigs/
+TM4C123GH6PM_develop/.settings/
+TM4C123GH6PM_develop/.ccsproject
+TM4C123GH6PM_develop/.clangd
+TM4C123GH6PM_develop/.cproject
+TM4C123GH6PM_develop/.project
+TM4C123GH6PM_develop/macros.ini_initial
+TM4C123GH6PM_develop/target_config.ccxml
 
 # Workspace folder
 .codex/
 .theia/
+
