@@ -41,8 +41,12 @@ int main(void){
         // so a second call would see 0 and lose the event.
         uint8_t pressed = pressed_button();
         if(pressed & SW1){ // SW1 pressed
+            MAP_GPIOPinWrite(GPIO_PORTN_BASE,LED0 | LED1,0x03);
+            MAP_GPIOPinWrite(GPIO_PORTF_BASE,LED2| LED3,0x11);
         }
         if(pressed & SW2){ // SW2 pressed
+            MAP_GPIOPinWrite(GPIO_PORTN_BASE,LED0 | LED1,0x00);
+            MAP_GPIOPinWrite(GPIO_PORTF_BASE,LED2| LED3,0x00);
         }
     }
 }
