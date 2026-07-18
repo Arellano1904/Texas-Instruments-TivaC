@@ -45,6 +45,8 @@ int main(void){
     display_print_string(0, 0, "Microcontroller:TM4C1294NCPDT", RED, BLACK);
     display_print_string(0, 16, "Display driver:ILI9341-240x320p", RED, BLACK);
     display_print_string(0, 32, "Touch controller:XPT2046", RED, BLACK);
+    display_print_string(0, 64, "Touch X:   ", GREEN, BLACK);
+    display_print_string(96, 64, "Touch Y:   ", GREEN, BLACK);
     
     // Loop Forever
     while(1){
@@ -54,6 +56,16 @@ int main(void){
         if(pressed & SW1){ // SW1 pressed
         }
         if(pressed & SW2){ // SW2 pressed
+        }
+        // Touch event latched by the PENIRQ ISR; touch_pressed() clears it on
+        // read, so call it once per loop just like pressed_button().
+        if(touch_pressed()){
+            // Read the XPT2046 and map raw ADC values to screen pixels.
+            touch_request_coords();
+            // Blank the old digits first so a shorter number (e.g. 45 after
+            // 239) does not leave stale characters behind.
+            display_print_int(64, 64, touch_get_x(), GREEN, BLACK);
+            display_print_int(160, 64, touch_get_y(), GREEN, BLACK);
         }
     }
 }

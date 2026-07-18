@@ -56,6 +56,7 @@ extern uint32_t __STACK_TOP;
 //*****************************************************************************
 extern void int_buttons_handler(void);
 extern void display_adc_handler(void);
+extern void touch_int_handler(void);
 //*****************************************************************************
 //
 // The vector table.  Note that the proper constructs must be placed on this to
@@ -136,7 +137,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // External Bus Interface 0
     int_buttons_handler,                      // GPIO Port J
     IntDefaultHandler,                      // GPIO Port K
-    IntDefaultHandler,                      // GPIO Port L
+    touch_int_handler,                        // GPIO Port L
     IntDefaultHandler,                      // SSI2 Rx and Tx
     IntDefaultHandler,                      // SSI3 Rx and Tx
     IntDefaultHandler,                      // UART3 Rx and Tx

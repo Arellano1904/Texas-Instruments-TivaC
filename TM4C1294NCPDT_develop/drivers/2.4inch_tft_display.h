@@ -50,7 +50,7 @@
 #define ILI9341_WIDTH   240
 #define ILI9341_HEIGHT  320
 #define ILI9341_LINES_PER_BUFFER 4
-// Font realted definitions
+// Font related definitions
 #define FONT_WIDTH   8
 #define FONT_HEIGHT 16
 #define FONT_FIRST_CHAR 0x20
@@ -65,6 +65,18 @@
 #define ILI9341_RAMWR   0x2C   // Memory write
 #define ILI9341_MADCTL  0x36   // Memory access control
 #define ILI9341_COLMOD  0x3A   // Pixel format set
+// XPT2046 control bytes: start=1, channel select, MODE=0 (12-bit),
+// SER/DFR=0 (differential), PD1:PD0=00 (power down between conversions so
+// PENIRQ stays enabled).
+#define XPT2046_CMD_X       0x90    // X position (A2:A0 = 001)
+#define XPT2046_CMD_Y       0xD0    // Y position (A2:A0 = 101)
+// Samples averaged per axis to suppress jitter.
+#define XPT2046_SAMPLES     8
+// Raw 12-bit ADC values seen at the panel edges. Calibrate these per unit.
+#define XPT2046_X_MIN       20
+#define XPT2046_X_MAX       4076
+#define XPT2046_Y_MIN       20
+#define XPT2046_Y_MAX       4076
 // ADC and PWM for brightness
 #define PWM_FREQ 500U   // Backlight PWM frequency (Hz)
 //*****************************************************************************
@@ -96,8 +108,22 @@ void display_pwm_config(void);
 // SPI
 void display_spi_config(void);
 void display_spi_data_len(uint32_t len);
-//DMA
+// DMA
 void display_dma_config(void);
 void display_snd_dma_buffer(uint16_t* buffer, uint32_t bufferLen);
-
 // Display Touch controller
+void touch_init(void);
+void touch_enable(void);
+void touch_disable(void);
+void touch_request_coords(void);
+void touch_int_handler(void);
+// Touch state accessors: touch_pressed() reads and clears the latched touch
+// event; touch_get_x/y() return the last coords from touch_request_coords().
+uint8_t touch_pressed(void);
+uint16_t touch_get_x(void);
+uint16_t touch_get_y(void);
+static uint16_t touch_read_raw(uint8_t cmd);
+static uint16_t touch_scale(uint16_t raw, uint16_t in_min, uint16_t in_max, uint16_t out_max);
+// SPI
+void touch_spi_config(void);
+
