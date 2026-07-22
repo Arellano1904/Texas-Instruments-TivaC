@@ -164,6 +164,15 @@ static volatile uint8_t touch_asserted = 0x00;
 // Last touch position in screen pixels, updated by touch_request_coords().
 static uint16_t touch_x = 0x0000;
 static uint16_t touch_y = 0x0000;
+// Last raw 12-bit ADC readings, kept for calibrating the *_MIN/*_MAX limits.
+static uint16_t touch_raw_x = 0x0000;
+static uint16_t touch_raw_y = 0x0000;
+// Active calibration limits: start from the XPT2046_* compile-time defaults
+// and are replaced at runtime by touch_calibration().
+static uint16_t cal_x_min = XPT2046_X_MIN;
+static uint16_t cal_x_max = XPT2046_X_MAX;
+static uint16_t cal_y_min = XPT2046_Y_MIN;
+static uint16_t cal_y_max = XPT2046_Y_MAX;
 
 //*****************************************************************************
 // Public display functions definitions
@@ -259,6 +268,7 @@ void display_set_window(uint16_t x0, uint16_t y0,uint16_t x1, uint16_t y1){
     // Config spi3 to send pixels data
     display_spi_data_len(16);
 }
+
 void display_fill_screen(uint16_t color){
     uint16_t  i;
     // Fill a chunk color buffer
@@ -284,6 +294,20 @@ void display_fill_screen(uint16_t color){
     /* Wait for the shift register to drain only once, at the very end */
     while (SSIBusy(SSI3_BASE));
 }
+
+//*****************************************************************************
+// Screen layout: banner and touch labels. Redrawn after anything that
+// takes over the whole screen (e.g. touch_calibration()).
+//*****************************************************************************
+void display_main_screen(void){
+    display_fill_screen(BLACK);
+    display_print_string(0, 0, "Microcontroller:TM4C1294NCPDT", RED, BLACK);
+    display_print_string(0, 16, "Display driver:ILI9341-240x320p", RED, BLACK);
+    display_print_string(0, 32, "Touch controller:XPT2046", RED, BLACK);
+    display_print_string(0, 64, "Touch X:   ", GREEN, BLACK);
+    display_print_string(96, 64, "Touch Y:   ", GREEN, BLACK);
+}
+
 void display_draw_char(uint16_t x, uint16_t y,char ch,uint16_t fgColor, uint16_t bgColor){
     // Usefull variables to fill the buffer
     uint8_t   row, col;
@@ -342,6 +366,7 @@ void display_draw_char(uint16_t x, uint16_t y,char ch,uint16_t fgColor, uint16_t
     while (SSIBusy(SSI3_BASE));
     display_disable();
 }
+
 void display_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fgColor,uint16_t bgColor){
     uint16_t curX = x;
     uint16_t curY = y;
@@ -371,11 +396,13 @@ void display_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fgColo
         curX += FONT_WIDTH;    // Advance cursor one glyph width
     }
 }
+
 void display_print_int(uint16_t x, uint16_t y,int32_t num,uint16_t color, uint16_t bg){
     char buf[12];   // "-2147483648" + '\0' = 12 bytes
     intToStr(num, buf);
     display_print_string(x,y,buf,color,bg);
 }
+
 void display_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint16_t color, uint16_t bg){
     // '-' + up to 10 integer digits + '.' + decimals + '\0'.
     // Clamp decimals so the result always fits the buffer.
@@ -655,9 +682,22 @@ uint16_t touch_get_y(void){
     return touch_y;
 }
 
-void touch_request_coords(void){
+uint16_t touch_get_raw_x(void){
+    return touch_raw_x;
+}
+
+uint16_t touch_get_raw_y(void){
+    return touch_raw_y;
+}
+
+uint8_t touch_request_coords(void){
     uint32_t flush;
     uint16_t raw_x, raw_y;
+
+    // Release bounce latches one last touch event as the pen lifts. If PENIRQ
+    // is already high the plates are floating and any conversion is garbage,
+    // so refuse the request and keep the previous coordinates.
+    if(MAP_GPIOPinRead(GPIO_PORTL_BASE, GPIO_PIN_2)) return 0;
 
     // Reading the controller makes PENIRQ pulse, which would otherwise queue a
     // spurious touch interrupt and keep touch_asserted stuck set. Mask PL2 for
@@ -677,13 +717,112 @@ void touch_request_coords(void){
     MAP_GPIOIntClear(GPIO_PORTL_BASE, GPIO_PIN_2);
     MAP_GPIOIntEnable(GPIO_PORTL_BASE, GPIO_PIN_2);
 
+    // With CS high again PENIRQ reflects the pen state: if it rose, the pen
+    // lifted mid-read and the samples are unreliable — discard them.
+    if(MAP_GPIOPinRead(GPIO_PORTL_BASE, GPIO_PIN_2)) return 0;
+
+    // Keep the raw readings so the calibration limits can be measured.
+    touch_raw_x = raw_x;
+    touch_raw_y = raw_y;
+
     // Portrait-flipped panel: both axes run opposite to the raw ADC sweep, so
     // invert each mapped result. Adjust the *_MIN/*_MAX limits during
     // calibration; swap the channel->axis assignment if the panel is mounted
     // rotated 90 degrees.
-    touch_x = (ILI9341_WIDTH - 1) - touch_scale(raw_x, XPT2046_X_MIN, XPT2046_X_MAX, ILI9341_WIDTH - 1);
-    touch_y = (ILI9341_HEIGHT - 1) - touch_scale(raw_y, XPT2046_Y_MIN, XPT2046_Y_MAX, ILI9341_HEIGHT - 1);
+    touch_x = (ILI9341_WIDTH - 1) - touch_scale(raw_x, cal_x_min, cal_x_max, ILI9341_WIDTH - 1);
+    touch_y = (ILI9341_HEIGHT - 1) - touch_scale(raw_y, cal_y_min, cal_y_max, ILI9341_HEIGHT - 1);
 
+    return 1;
+}
+
+// Blocks until PENIRQ has stayed high (pen up) for a while, then drops the
+// spurious events the release bounce latched.
+static void touch_cal_wait_release(void){
+    uint16_t stable = 0;
+    while(stable < 50){
+        stable = MAP_GPIOPinRead(GPIO_PORTL_BASE, GPIO_PIN_2) ? stable + 1 : 0;
+        delay_ms(1);
+    }
+    touch_pressed();
+}
+
+// Draws a cross centered on (sx, sy), blocks until a valid press lands and
+// returns its raw ADC readings, then erases the cross and waits for release.
+static void touch_cal_point(uint16_t sx, uint16_t sy, uint16_t *rx, uint16_t *ry){
+    // The '+' glyph cross sits ~(+4, +8) from the character origin.
+    uint16_t cx = sx - 4, cy = sy - 8;
+    display_draw_char(cx, cy, '+', WHITE, BLACK);
+    for(;;){
+        if(touch_pressed() && touch_request_coords()){
+            *rx = touch_get_raw_x();
+            *ry = touch_get_raw_y();
+            break;
+        }
+    }
+    display_draw_char(cx, cy, ' ', BLACK, BLACK);
+    touch_cal_wait_release();
+}
+
+// Interactive two-point calibration: sample the raw ADC at two crosses near
+// opposite corners and, since the mapping is linear and inverted (low raw =
+// high pixel), project the readings out to pixel 0 and WIDTH/HEIGHT-1 of each
+// axis. Results are applied immediately and shown on screen so they can be
+// copied into the XPT2046_*_MIN/MAX defines to survive a reset.
+void touch_calibration(void){
+    // Cross centers in screen pixels, inset from opposite corners.
+    const uint16_t sx0 = XPT2046_CAL_MARGIN;
+    const uint16_t sy0 = XPT2046_CAL_MARGIN;
+    const uint16_t sx1 = ILI9341_WIDTH  - 1 - XPT2046_CAL_MARGIN;
+    const uint16_t sy1 = ILI9341_HEIGHT - 1 - XPT2046_CAL_MARGIN;
+    uint16_t raw_x0, raw_y0, raw_x1, raw_y1;
+
+    display_fill_screen(BLACK);
+    display_print_string(76, 136, "Calibration", WHITE, BLACK);
+    display_print_string(56, 152, "press each cross", WHITE, BLACK);
+
+    // Drop any event latched before entering calibration.
+    touch_pressed();
+
+    touch_cal_point(sx0, sy0, &raw_x0, &raw_y0);
+    touch_cal_point(sx1, sy1, &raw_x1, &raw_y1);
+
+    int32_t x_at_0   = raw_x0 - (((int32_t)raw_x1 - raw_x0) * sx0) / (sx1 - sx0);
+    int32_t x_at_max = raw_x0 + (((int32_t)raw_x1 - raw_x0) * (ILI9341_WIDTH - 1 - sx0)) / (sx1 - sx0);
+    int32_t y_at_0   = raw_y0 - (((int32_t)raw_y1 - raw_y0) * sy0) / (sy1 - sy0);
+    int32_t y_at_max = raw_y0 + (((int32_t)raw_y1 - raw_y0) * (ILI9341_HEIGHT - 1 - sy0)) / (sy1 - sy0);
+
+    // The projection can overshoot the ADC range at the edges.
+    if(x_at_max < 0) x_at_max = 0;
+    if(y_at_max < 0) y_at_max = 0;
+    if(x_at_0 > 4095) x_at_0 = 4095;
+    if(y_at_0 > 4095) y_at_0 = 4095;
+
+    display_fill_screen(BLACK);
+    // A plausible panel spans well over 500 counts between the corners; less
+    // than that (or a reversed span) means a mistouch — keep the old limits.
+    if((x_at_0 - x_at_max) > 500 && (y_at_0 - y_at_max) > 500){
+        cal_x_min = (uint16_t)x_at_max;
+        cal_x_max = (uint16_t)x_at_0;
+        cal_y_min = (uint16_t)y_at_max;
+        cal_y_max = (uint16_t)y_at_0;
+        display_print_string(0, 0, "Calibration OK", GREEN, BLACK);
+        display_print_string(0, 32, "X_MIN:", WHITE, BLACK);
+        display_print_int(56, 32, cal_x_min, WHITE, BLACK);
+        display_print_string(0, 48, "X_MAX:", WHITE, BLACK);
+        display_print_int(56, 48, cal_x_max, WHITE, BLACK);
+        display_print_string(0, 64, "Y_MIN:", WHITE, BLACK);
+        display_print_int(56, 64, cal_y_min, WHITE, BLACK);
+        display_print_string(0, 80, "Y_MAX:", WHITE, BLACK);
+        display_print_int(56, 80, cal_y_max, WHITE, BLACK);
+        display_print_string(0, 112, "Copy into XPT2046_*_MIN/", WHITE, BLACK);
+        display_print_string(0, 128, "MAX to keep after reset", WHITE, BLACK);
+    }else{
+        display_print_string(0, 0, "Calibration failed", RED, BLACK);
+        display_print_string(0, 32, "Old limits kept", WHITE, BLACK);
+    }
+    display_print_string(0, 176, "Touch screen to exit", CYAN, BLACK);
+    while(!touch_pressed()){}
+    touch_cal_wait_release();
 }
 
 // Clock one channel: a 16-bit command frame followed by a 16-bit frame that

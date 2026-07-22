@@ -72,11 +72,16 @@
 #define XPT2046_CMD_Y       0xD0    // Y position (A2:A0 = 101)
 // Samples averaged per axis to suppress jitter.
 #define XPT2046_SAMPLES     8
-// Raw 12-bit ADC values seen at the panel edges. Calibrate these per unit.
-#define XPT2046_X_MIN       20
-#define XPT2046_X_MAX       4076
-#define XPT2046_Y_MIN       20
-#define XPT2046_Y_MAX       4076
+// Raw 12-bit ADC values seen at the panel edges. These are only power-on
+// defaults: touch_calibration() measures the real per-unit limits at runtime
+// and shows them so they can be copied here to persist across resets.
+#define XPT2046_X_MIN       350  // 10
+#define XPT2046_X_MAX       3850 // 4076
+#define XPT2046_Y_MIN       650  // 10
+#define XPT2046_Y_MAX       3850 // 4076
+// Inset of the calibration crosses from the screen corners, in pixels.
+// Must be >= 8 so the '+' glyph cell stays fully on screen.
+#define XPT2046_CAL_MARGIN  10
 // ADC and PWM for brightness
 #define PWM_FREQ 500U   // Backlight PWM frequency (Hz)
 //*****************************************************************************
@@ -95,6 +100,7 @@ void display_draw_char(uint16_t x, uint16_t y,char c,uint16_t fg, uint16_t bg);
 void display_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fg,uint16_t bg);
 void display_print_int(uint16_t x, uint16_t y,int32_t num,uint16_t color, uint16_t bg);
 void display_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint16_t color, uint16_t bg);
+void display_main_screen(void);
 // Internal string helpers (private to this translation unit).
 static void intToStr(int32_t value, char *buf);
 static void floatToStr(float value, char *buf, uint8_t decimals);
@@ -115,15 +121,29 @@ void display_snd_dma_buffer(uint16_t* buffer, uint32_t bufferLen);
 void touch_init(void);
 void touch_enable(void);
 void touch_disable(void);
-void touch_request_coords(void);
+// Samples the XPT2046 and updates the cached coords. Returns 1 on a valid
+// read, 0 when the pen was up before or lifted during the read (coords kept).
+uint8_t touch_request_coords(void);
+// Interactive two-point calibration. Takes over the screen, guides the user
+// through two crosses and updates the runtime calibration limits. The caller
+// must redraw its own screen afterwards.
+void touch_calibration(void);
 void touch_int_handler(void);
 // Touch state accessors: touch_pressed() reads and clears the latched touch
 // event; touch_get_x/y() return the last coords from touch_request_coords().
 uint8_t touch_pressed(void);
 uint16_t touch_get_x(void);
 uint16_t touch_get_y(void);
+// Raw 12-bit readings from the last valid touch_request_coords(), for
+// calibrating the XPT2046_*_MIN/MAX limits against the physical edges.
+uint16_t touch_get_raw_x(void);
+uint16_t touch_get_raw_y(void);
 static uint16_t touch_read_raw(uint8_t cmd);
 static uint16_t touch_scale(uint16_t raw, uint16_t in_min, uint16_t in_max, uint16_t out_max);
+// Calibration helpers (private to this translation unit): wait for a clean
+// pen release, and sample the raw ADC at one on-screen cross.
+static void touch_cal_wait_release(void);
+static void touch_cal_point(uint16_t sx, uint16_t sy, uint16_t *rx, uint16_t *ry);
 // SPI
 void touch_spi_config(void);
 
