@@ -304,8 +304,6 @@ void display_main_screen(void){
     display_print_string(0, 0, "Microcontroller:TM4C1294NCPDT", RED, BLACK);
     display_print_string(0, 16, "Display driver:ILI9341-240x320p", RED, BLACK);
     display_print_string(0, 32, "Touch controller:XPT2046", RED, BLACK);
-    display_print_string(0, 64, "Touch X:   ", GREEN, BLACK);
-    display_print_string(96, 64, "Touch Y:   ", GREEN, BLACK);
 }
 
 void display_draw_char(uint16_t x, uint16_t y,char ch,uint16_t fgColor, uint16_t bgColor){
@@ -411,6 +409,13 @@ void display_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint
     floatToStr(num, buf,decimals);
     display_print_string(x,y,buf,color,bg);
 }
+
+void display_print_hex(uint16_t x, uint16_t y,uint32_t num, uint8_t digits,uint16_t color, uint16_t bg){
+    // "0x" + up to 8 hex digits + '\0' = 11 bytes.
+    char buf[11];
+    hexToStr(num, buf, digits);
+    display_print_string(x,y,buf,color,bg);
+}
 //*****************************************************************************
 // Support functions definitions
 //*****************************************************************************
@@ -486,6 +491,25 @@ static void floatToStr(float value, char *buf, uint8_t decimals){
             frac -= digit;
         }
     }
+
+    buf[i] = '\0';
+}
+
+static void hexToStr(uint32_t value, char *buf, uint8_t digits){
+    static const char hexChars[] = "0123456789ABCDEF";
+    int i = 0;
+    int8_t shift;
+
+    // At least one digit, and cap at the 8 nibbles of a uint32_t.
+    if (digits == 0) digits = 1;
+    if (digits > 8)  digits = 8;
+
+    buf[i++] = '0';
+    buf[i++] = 'x';
+
+    // Emit nibbles most-significant first.
+    for (shift = (digits - 1) * 4; shift >= 0; shift -= 4)
+        buf[i++] = hexChars[(value >> shift) & 0xF];
 
     buf[i] = '\0';
 }
