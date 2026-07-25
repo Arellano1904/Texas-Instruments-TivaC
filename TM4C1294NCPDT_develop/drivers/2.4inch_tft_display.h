@@ -100,10 +100,12 @@ void display_draw_char(uint16_t x, uint16_t y,char c,uint16_t fg, uint16_t bg);
 void display_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fg,uint16_t bg);
 void display_print_int(uint16_t x, uint16_t y,int32_t num,uint16_t color, uint16_t bg);
 void display_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint16_t color, uint16_t bg);
+void display_print_hex(uint16_t x, uint16_t y,uint32_t num, uint8_t digits,uint16_t color, uint16_t bg);
 void display_main_screen(void);
 // Internal string helpers (private to this translation unit).
 static void intToStr(int32_t value, char *buf);
 static void floatToStr(float value, char *buf, uint8_t decimals);
+static void hexToStr(uint32_t value, char *buf, uint8_t digits);
 // Display brightness controller
 // ADC 
 void display_adc_config(void);
