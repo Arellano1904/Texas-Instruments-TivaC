@@ -91,7 +91,7 @@ extern volatile uint32_t systemClkFreq;
 // and touch_get_*() accessors below.
 
 // Brightness-control state (defined in 2.4inchDisplay.c).
-// The backlight is driven by M0PWM2 (PB4); its duty cycle sets the brightness.
+// The backlight is driven by M0PWM2 (PF2); its duty cycle sets the brightness.
 // A control voltage on AIN0 (PE3) is sampled by ADC0 sequencer 3, whose ISR
 // maps the 0..4095 reading onto the PWM duty cycle.
 extern volatile uint32_t adc0Ssq3Value; // Latest raw ADC0 SS3 sample (0..4095)
@@ -118,11 +118,11 @@ void display_print_int(uint16_t x, uint16_t y,int32_t num,uint16_t color, uint16
 void display_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint16_t color, uint16_t bg);
 void display_print_info(void);
 // Display brightness controller
-// ADC — setup helpers, call after the system clock has been configured.
+// ADC — setup helpers, call after systemClkFreq has been set.
 void display_adc_config(void);       // Configure ADC0 SS3 (AIN0/PE3)
 void display_adc_handler(void);      // ADC0 SS3 ISR (placed in the vector table)
 // PWM
-void display_pwm_config(void);       // Configure the M0PWM2/PB4 backlight output
+void display_pwm_config(void);       // Configure the M0PWM2/PF2 backlight output
 // Display screen controller
 // SPI (SSI3 for the display)
 void display_spi_config(void);

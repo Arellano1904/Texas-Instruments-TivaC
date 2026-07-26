@@ -43,7 +43,6 @@ static void IntDefaultHandler(void);
 //*****************************************************************************
 extern void int_buttons_handler(void);
 extern void touch_int_handler(void);
-extern void display_adc_handler(void);
 
 //*****************************************************************************
 //
@@ -104,7 +103,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // ADC Sequence 0
     IntDefaultHandler,                      // ADC Sequence 1
     IntDefaultHandler,                      // ADC Sequence 2
-    display_adc_handler,                    // ADC Sequence 3
+    IntDefaultHandler,                      // ADC Sequence 3
     IntDefaultHandler,                      // Watchdog timer
     IntDefaultHandler,                      // Timer 0 subtimer A
     IntDefaultHandler,                      // Timer 0 subtimer B
