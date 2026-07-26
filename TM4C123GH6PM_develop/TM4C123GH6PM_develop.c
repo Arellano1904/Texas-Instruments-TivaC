@@ -13,6 +13,7 @@
 #include "driverlib/fpu.h"
 // Own drivers
 #include "drivers/on_board_buttons_and_led.h"
+#include "drivers/2.4inchDisplay.h"
 
 //*****************************************************************************
 // The error routine that is called if the driver library encounters an error.
@@ -34,6 +35,9 @@ int main(void){
     // Configure the on board buttons (interrupt driven) and the RGB LED.
     config_buttons();
     config_rgb_led();
+    // Display 
+    display_init();
+    display_fill_screen(BLACK);
 
     // Loop Forever
     while(1){
