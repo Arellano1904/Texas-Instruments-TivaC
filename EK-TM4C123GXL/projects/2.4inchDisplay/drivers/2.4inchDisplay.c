@@ -16,9 +16,6 @@ Touch ------- EK-TM4C123GXL
   T_DIN       PA5
   T_DO        PA4
   T_IRQ       PB2
-Backlight --- EK-TM4C123GXL
-  LED         PB4 (M0PWM2, brightness PWM)
-  knob        PE3 (AIN0, control voltage -> duty cycle)
 */
 // 2.4inch display driver (ILI9341 display + XPT2046 touch controller)
 #include "2.4inchDisplay.h"
@@ -271,8 +268,6 @@ void display_init(void){
     // Peripherals: SPI link, uDMA pixel pump, and the ADC/PWM backlight control.
     display_spi_config();
     display_dma_config();
-    display_adc_config();
-    display_pwm_config();
     touch_init();
 
     // The reset and init sequences below block on delay_ms(), so the delay
@@ -639,113 +634,106 @@ static void floatToStr(float value, char *buf, uint8_t decimals){
     buf[i] = '\0';
 }
 
-//*****************************************************************************
-// Backlight brightness control.
-//
-// The panel backlight is driven by M0PWM2 (PB4 on the TM4C123GH6PM — PF2
-// belongs to the on-board RGB LED and is not an M0PWM2 pin on this part);
-// its duty cycle sets the brightness. A control voltage on AIN0 (PE3) is
-// sampled by ADC0 sequencer 3, and the ADC interrupt maps the reading
-// (0..4095) onto the PWM duty cycle. ADC0 SS3 is triggered by PWM
-// generator 1, so conversions are paced by the backlight PWM itself.
-//*****************************************************************************
-#define PWM_FREQ 500U   // Backlight PWM frequency (Hz)
+// //*****************************************************************************
+// // Backlight brightness control.
+// //
+// // The panel backlight is driven by M0PWM2 (PF2); its duty cycle sets the
+// // brightness. A control voltage on AIN0 (PE3) is sampled by ADC0 sequencer 3,
+// // and the ADC interrupt maps the reading (0..4095) onto the PWM duty cycle.
+// // ADC0 SS3 is triggered by PWM generator 1, so conversions are paced by the
+// // backlight PWM itself.
+// //*****************************************************************************
+// #define PWM_FREQ 500U   // Backlight PWM frequency (Hz)
 
-// Latest raw ADC0 SS3 sample (0..4095). Written by the ISR, read by the app.
-volatile uint32_t adc0Ssq3Value = 0x0000;
-// Set to 1 by the ADC ISR when a new sample is ready; cleared by the consumer.
-volatile uint8_t adc_ready = 0x00;
-// Backlight duty cycle, 0.0..1.0. Updated from the ADC reading in the ISR.
-volatile float fDutyCycle = 0.50f;   // 50%
-// PWM period in clock ticks, computed at runtime from the system clock.
-static uint32_t pwmLoad = 0x0000;
-// PWM pulse width in clock ticks (derived from fDutyCycle).
-static uint32_t ui32Width = 0x0000;
+// // Latest raw ADC0 SS3 sample (0..4095). Written by the ISR, read by the app.
+// volatile uint32_t adc0Ssq3Value = 0x0000;
+// // Set to 1 by the ADC ISR when a new sample is ready; cleared by the consumer.
+// volatile uint8_t adc_ready = 0x00;
+// // Backlight duty cycle, 0.0..1.0. Updated from the ADC reading in the ISR.
+// volatile float fDutyCycle = 0.50f;   // 50%
+// // PWM period in clock ticks, computed at runtime from the system clock.
+// static uint32_t pwmLoad = 0x0000;
+// // PWM pulse width in clock ticks (derived from fDutyCycle).
+// static uint32_t ui32Width = 0x0000;
 
-void display_adc_config(void){
-    // Enable the ADC module and related peripheral
-    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_ADC0);
-    // Wait for the ADC0 module to be ready
-    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_ADC0));
-    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
-    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOE));
-    // Disable digital function on the pin
-    MAP_GPIOPinTypeADC(GPIO_PORTE_BASE, GPIO_PIN_3);
-    // No ADCClockConfigSet() here: that API is TM4C129x-specific. The TM4C123
-    // ADC runs from its default PLL-derived 16 MHz clock, which is fine for
-    // sampling a brightness knob.
-    // Use VDDA (3.3 V)
-    MAP_ADCReferenceSet(ADC0_BASE, ADC_REF_INT);
-    // Configure ADC oversampling
-    MAP_ADCHardwareOversampleConfigure(ADC0_BASE, 0);
-    // Disable sequencer 3 during config
-    MAP_ADCSequenceDisable(ADC0_BASE, 3);
-    // Sequencer 3 fires on the PWM module 0 generator 1 trigger (the TM4C123
-    // has two PWM modules; TSSEL resets to module 0, matching PWM_MOD0).
-    MAP_ADCSequenceConfigure(ADC0_BASE, 3, ADC_TRIGGER_PWM_MOD0 | ADC_TRIGGER_PWM1, 0);
-    // Configure sequencer steps
-    MAP_ADCSequenceStepConfigure(ADC0_BASE, 3, 0,ADC_CTL_IE | ADC_CTL_END | ADC_CTL_CH0);
-    // Clear ADC0 Sequencer 3 interrupt
-    MAP_ADCIntClear(ADC0_BASE, 3);
-    // Enable ADC0 Sequencer 3 interrupt
-    MAP_ADCIntEnable(ADC0_BASE, 3);
-    // Enable interrupt in NVIC
-    MAP_IntEnable(INT_ADC0SS3);
-    // Enable ADC sequencer
-    MAP_ADCSequenceEnable(ADC0_BASE, 3);
-}
+// void display_adc_config(void){
+//     // Enable the ADC module and related peripheral
+//     MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_ADC0);
+//     // Wait for the ADC0 module to be ready
+//     while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_ADC0));
+//     MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
+//     while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOE));
+//     // Disable digital function on the pin
+//     MAP_GPIOPinTypeADC(GPIO_PORTE_BASE, GPIO_PIN_3);
+//     // Config ADC clock
+//     ADCClockConfigSet(ADC0_BASE,ADC_CLOCK_SRC_PLL | ADC_CLOCK_RATE_FULL,12);
+//     // Use VDDA (3.3 V)
+//     MAP_ADCReferenceSet(ADC0_BASE, ADC_REF_INT);
+//     // Configure ADC oversampling
+//     MAP_ADCHardwareOversampleConfigure(ADC0_BASE, 0);
+//     // Disable sequencer 3 during config
+//     MAP_ADCSequenceDisable(ADC0_BASE, 3);
+//     // Enable the first sample sequencer to capture the value of channel 0 when the processor trigger occurs
+//     MAP_ADCSequenceConfigure(ADC0_BASE, 3, ADC_TRIGGER_PWM_MOD0 | ADC_TRIGGER_PWM1, 0);
+//     // Configure sequencer steps
+//     MAP_ADCSequenceStepConfigure(ADC0_BASE, 3, 0,ADC_CTL_IE | ADC_CTL_END | ADC_CTL_CH0);
+//     // Clear ADC0 Sequencer 3 interrupt
+//     MAP_ADCIntClear(ADC0_BASE, 3);
+//     // Enable ADC0 Sequencer 3 interrupt
+//     MAP_ADCIntEnable(ADC0_BASE, 3);
+//     // Enable interrupt in NVIC
+//     MAP_IntEnable(INT_ADC0SS3);
+//     // Enable ADC sequencer
+//     MAP_ADCSequenceEnable(ADC0_BASE, 3);
 
-// ADC0 Sequencer 3 interrupt handler
-void display_adc_handler(void){
-    uint32_t sample = 0;
-    // ALWAYS clear first, before reading
-    MAP_ADCIntClear(ADC0_BASE, 3);
-    // Read ADC result into a non-volatile local, then publish it (avoids
-    // passing a volatile pointer to the DriverLib API).
-    MAP_ADCSequenceDataGet(ADC0_BASE, 3, &sample);
-    adc0Ssq3Value = sample;
-    // Update PWM duty cycle based on ADC reading (0-4095 -> 0-100%)
-    fDutyCycle = (float)sample / 4095.0f;
-    ui32Width  = (uint32_t)(pwmLoad * fDutyCycle);
-    // Clamp: PWM hardware requires 1 <= width <= (pwmLoad - 1)
-    // If width == 0 or >= pwmLoad the comparator never fires -> output glitches
-    if(ui32Width < 1)           ui32Width = 1;
-    if(ui32Width > pwmLoad - 1) ui32Width = pwmLoad - 1;
-    MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_2, ui32Width);
-    // Signal main loop that a new ADC value is ready
-    adc_ready = 0x01;
-}
+// }
+// // ADC0 Sequencer 3 interrupt handler
+// void display_adc_handler(void){
+//     uint32_t sample = 0;
+//     // ALWAYS clear first, before reading
+//     MAP_ADCIntClear(ADC0_BASE, 3);
+//     // Read ADC result into a non-volatile local, then publish it (avoids
+//     // passing a volatile pointer to the DriverLib API).
+//     MAP_ADCSequenceDataGet(ADC0_BASE, 3, &sample);
+//     adc0Ssq3Value = sample;
+//     // Update PWM duty cycle based on ADC reading (0-4095 -> 0-100%)
+//     fDutyCycle = (float)sample / 4095.0f;
+//     ui32Width  = (uint32_t)(pwmLoad * fDutyCycle);
+//     // Clamp: PWM hardware requires 1 <= width <= (pwmLoad - 1)
+//     // If width == 0 or >= pwmLoad the comparator never fires -> output glitches
+//     if(ui32Width < 1)           ui32Width = 1;
+//     if(ui32Width > pwmLoad - 1) ui32Width = pwmLoad - 1;
+//     MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_2, ui32Width);
+//     // Signal main loop that a new ADC value is ready
+//     adc_ready = 0x01;
+// }
 
-void display_pwm_config(void){
-    // Enabling and waiting for related peripheral
-    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_PWM0);
-    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_PWM0));
-    MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
-    while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOB));
-    // Configure pin PB4 (M0PWM2 on the TM4C123GH6PM) as PWM output
-    MAP_GPIOPinConfigure(GPIO_PB4_M0PWM2);
-    MAP_GPIOPinTypePWM(GPIO_PORTB_BASE, GPIO_PIN_4);
-    // Config PWM module clock. On the TM4C123 the PWM divisor lives in SysCtl
-    // (PWMClockSet() is TM4C129x-only).
-    MAP_SysCtlPWMClockSet(SYSCTL_PWMDIV_2);
-    // PWM period in ticks, derived from the system clock (SYSCTL_PWMDIV_2
-    // halves it): 80 MHz / 2 / 500 Hz = 80,000 ticks. The counter is 16-bit,
-    // but PWMGenPeriodSet() halves the period for up-down mode (LOAD=40,000),
-    // so it fits.
-    pwmLoad = (MAP_SysCtlClockGet() / 2U) / PWM_FREQ;
-    // Config PWM generator
-    MAP_PWMGenConfigure(PWM0_BASE,PWM_GEN_1,PWM_GEN_MODE_UP_DOWN | PWM_GEN_MODE_NO_SYNC | PWM_GEN_MODE_DBG_STOP);
-    // Enable PWM triger output
-    PWMGenIntTrigEnable(PWM0_BASE, PWM_GEN_1, PWM_TR_CNT_ZERO);
-    // Set PWM period
-    MAP_PWMGenPeriodSet(PWM0_BASE,PWM_GEN_1,pwmLoad);
-    // Set PWM pulse width
-    ui32Width = (uint32_t)(pwmLoad * fDutyCycle);
-    MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_2, ui32Width);
-    // Enable PWM output
-    MAP_PWMOutputState(PWM0_BASE, PWM_OUT_2_BIT, true);
-    MAP_PWMGenEnable(PWM0_BASE, PWM_GEN_1);
-}
+// void display_pwm_config(void){
+//     // Enabling and waiting for related peripheral
+//     MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_PWM0);
+//     while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_PWM0));
+//     MAP_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
+//     while(!MAP_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF)); 
+//     // Configure pin PF2 as PWM output
+//     MAP_GPIOPinConfigure(GPIO_PF2_M0PWM2);
+//     MAP_GPIOPinTypePWM(GPIO_PORTF_BASE, GPIO_PIN_2);
+//     // Config PWM module clock
+//     MAP_PWMClockSet(PWM0_BASE, PWM_SYSCLK_DIV_2);
+//     // PWM period in ticks, derived from the system clock (PWM_SYSCLK_DIV_2 halves it)
+//     pwmLoad = (MAP_SysCtlClockGet() / 2U) / PWM_FREQ;
+//     // Config PWM generator
+//     MAP_PWMGenConfigure(PWM0_BASE,PWM_GEN_1,PWM_GEN_MODE_UP_DOWN | PWM_GEN_MODE_NO_SYNC | PWM_GEN_MODE_DBG_STOP);
+//     // Enable PWM triger output
+//     PWMGenIntTrigEnable(PWM0_BASE, PWM_GEN_1, PWM_TR_CNT_ZERO);
+//     // Set PWM period
+//     MAP_PWMGenPeriodSet(PWM0_BASE,PWM_GEN_1,pwmLoad);
+//     // Set PWM pulse width
+//     ui32Width = (uint32_t)(pwmLoad * fDutyCycle);
+//     MAP_PWMPulseWidthSet(PWM0_BASE, PWM_OUT_2, ui32Width);
+//     // Enable PWM output
+//     MAP_PWMOutputState(PWM0_BASE, PWM_OUT_2_BIT, true);
+//     MAP_PWMGenEnable(PWM0_BASE, PWM_GEN_1);
+// }
 
 //*****************************************************************************
 // //***** Touch (XPT2046) functions *****//

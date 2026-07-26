@@ -46,10 +46,13 @@ int main(void){
     // Loop Forever
     while(1){
         uint8_t buttons = pressed_button();
-        if(buttons & SW1){      // SW1 pressed.
-        
+        if(buttons & SW1){ // SW1 pressed.
+            // Run the interactive touch calibration, then restore the screen
+            // it took over.
+            touch_calibration();
+            display_print_info();
         }
-        if(buttons & SW2){      // SW2 pressed.
+        if(buttons & SW2){ // SW2 pressed.
             
         }
     }
