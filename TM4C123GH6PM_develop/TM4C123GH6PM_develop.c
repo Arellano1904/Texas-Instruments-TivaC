@@ -24,6 +24,10 @@ void __error__(char *pcFilename, uint32_t ui32Line){
 #endif
 
 //*****************************************************************************
+// GLOBALS VARIABLES
+//*****************************************************************************
+
+//*****************************************************************************
 // FUNCTION DECLARATIONS
 //*****************************************************************************
 
@@ -45,6 +49,8 @@ int main(void){
 
     // Loop Forever
     while(1){
+        // Read the latched event ONCE: button_pressed() clears it on read,
+        // so a second call would see 0 and lose the event.
         uint8_t buttons = pressed_button();
         if(buttons & SW1){      // SW1 pressed.
         
