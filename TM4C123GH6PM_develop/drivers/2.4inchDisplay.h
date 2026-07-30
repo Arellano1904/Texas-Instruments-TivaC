@@ -116,6 +116,7 @@ void display_draw_char(uint16_t x, uint16_t y,char c,uint16_t fg, uint16_t bg);
 void display_print_string(uint16_t x, uint16_t y,const char *str,uint16_t fg,uint16_t bg);
 void display_print_int(uint16_t x, uint16_t y,int32_t num,uint16_t color, uint16_t bg);
 void display_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint16_t color, uint16_t bg);
+void display_print_hex(uint16_t x, uint16_t y,uint32_t num, uint8_t digits,uint16_t color, uint16_t bg);
 void display_print_info(void);
 // Display brightness controller
 // ADC — setup helpers, call after the system clock has been configured.
@@ -154,7 +155,7 @@ uint16_t touch_get_raw_y(void);
 // SPI (SSI0 for the touch controller)
 void touch_spi_config(void);
 
-// Note: intToStr()/floatToStr(), touch_read_raw()/touch_scale() and the
+// Note: intToStr()/floatToStr()/hexToStr(), touch_read_raw()/touch_scale() and the
 // calibration helpers touch_cal_wait_release()/touch_cal_point() are internal
 // helpers with static linkage, defined privately in 2.4inchDisplay.c
 // (not part of the public API).

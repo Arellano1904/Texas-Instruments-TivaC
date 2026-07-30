@@ -48,6 +48,7 @@ Backlight --- EK-TM4C123GXL
 // Internal string helpers (private to this translation unit).
 static void intToStr(int32_t value, char *buf);
 static void floatToStr(float value, char *buf, uint8_t decimals);
+static void hexToStr(uint32_t value, char *buf, uint8_t digits);
 // Internal touch helpers (private to this translation unit).
 static uint16_t touch_read_raw(uint8_t cmd);
 static uint16_t touch_scale(uint16_t raw, uint16_t in_min, uint16_t in_max, uint16_t out_max);
@@ -462,6 +463,13 @@ void display_print_float(uint16_t x, uint16_t y,float num, uint8_t decimals,uint
     display_print_string(x,y,buf,color,bg);
 }
 
+void display_print_hex(uint16_t x, uint16_t y,uint32_t num, uint8_t digits,uint16_t color, uint16_t bg){
+    // "0x" + up to 8 hex digits + '\0' = 11 bytes.
+    char buf[11];
+    hexToStr(num, buf, digits);
+    display_print_string(x,y,buf,color,bg);
+}
+
 void display_print_info(void){
     display_fill_screen(BLACK);
     display_print_string(0, 0, "Microcontroller:TM4C123GH6PM", RED, BLACK);
@@ -635,6 +643,25 @@ static void floatToStr(float value, char *buf, uint8_t decimals){
             frac -= digit;
         }
     }
+
+    buf[i] = '\0';
+}
+
+static void hexToStr(uint32_t value, char *buf, uint8_t digits){
+    static const char hexChars[] = "0123456789ABCDEF";
+    int i = 0;
+    int8_t shift;
+
+    // At least one digit, and cap at the 8 nibbles of a uint32_t.
+    if (digits == 0) digits = 1;
+    if (digits > 8)  digits = 8;
+
+    buf[i++] = '0';
+    buf[i++] = 'x';
+
+    // Emit nibbles most-significant first.
+    for (shift = (digits - 1) * 4; shift >= 0; shift -= 4)
+        buf[i++] = hexChars[(value >> shift) & 0xF];
 
     buf[i] = '\0';
 }
