@@ -204,12 +204,12 @@ void st7735_disable(void);
 void st7735_rst(void);
 void st7735_snd_dt(uint8_t data);
 void st7735_snd_cmd(uint8_t cmd);
-void st7735_st_wndw();
-void st7735_fll_scrn();
-void st7735_drw_chr();
-void st7735_prtn_str();
-void st7735_prtn_int();
-void st7735_prtn_float();
+void st7735_st_wndw(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1);
+void st7735_fll_scrn(uint16_t color);
+void st7735_drw_chr(uint8_t x, uint8_t y, char c, uint16_t color, uint16_t bg);
+void st7735_prtn_str(uint8_t x, uint8_t y, const char* str, uint16_t color, uint16_t bg);
+void st7735_prtn_int(uint8_t x, uint8_t y, int32_t value, uint16_t color, uint16_t bg);
+void st7735_prtn_float(uint8_t x, uint8_t y, float value, uint8_t decimals, uint16_t color, uint16_t bg);
 
 //*****************************************************************************
 // Main 'C' Language entry point.  Toggle the RGB LED with the on board buttons.
@@ -238,8 +238,13 @@ int main(void){
             st7735_init();
         }
         if(buttons & SW2){      // SW2 pressed.
-            
             MAP_GPIOPinWrite(GPIO_PORTF_BASE,LEDR,0x00);
+            // Black canvas, then some sample strings and numbers on top of it
+            st7735_fll_scrn(BLACK);
+            st7735_prtn_str(0, 0,  "TM4C123 ST7735", RED, BLACK);
+            st7735_prtn_str(0, 8, "DMA pixel push", BLUE, BLACK);
+            st7735_prtn_int(0, 16, -12345, GREEN, BLACK);
+            st7735_prtn_float(0,24, 3.14159f, 3, PURPLE, BLACK);
         }
     }
 }
@@ -304,7 +309,7 @@ void dma_dsp_cnfg(void){
 
 }
 
-void dma_dps_snd_buffer(uint16_t* buffer, uint32_t bufferLen){
+void dma_dsp_snd_buffer(uint16_t* buffer, uint32_t bufferLen){
     // CS low to enable the Display and DC high to data mode //
     MAP_GPIOPinWrite(GPIO_PORTD_BASE,GPIO_PIN_1 | GPIO_PIN_2, 0x04);
     // Disable channel before setup
@@ -381,7 +386,7 @@ void st7735_init(void){
      *  MADCTL bit 3 = RGB/BGR order: flip it if R and B look swapped.
      *  Bits MY/MX/MV rotate & mirror the display */
     st7735_snd_cmd(ST7735_MADCTL);
-    st7735_snd_dt(0xC8);//common default for red-tab 1.8"
+    st7735_snd_dt(0x00);//180 rotation: MY=0, MX=0 (both axes flipped), MV=0 (still 128x160), RGB order (bit3=0)
  
     st7735_snd_cmd(ST7735_COLMOD);
     st7735_snd_dt(0x05);//0x05 = 16 bit/px, RGB565
@@ -415,6 +420,8 @@ void st7735_init(void){
     delay_ms(100);// display on
     // Change SSI3 len to 16bits
     spi_dsp_len(16);
+    // Arm the uDMA channel that streams RGB565 pixels to the SSI3 TX FIFO
+    dma_dsp_cnfg();
 }
 void st7735_enable(void){
     MAP_GPIOPinWrite(GPIO_PORTD_BASE,GPIO_PIN_1,0x00);
@@ -441,4 +448,101 @@ void st7735_snd_cmd(uint8_t cmd){
     MAP_SSIDataPut(SSI3_BASE,cmd);
     while(MAP_SSIBusy(SSI3_BASE));
     st7735_disable();
+}
+void st7735_st_wndw(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1){
+    // CASET/RASET/RAMWR are 8-bit frames: drop SSI3 back to 8 bits so each
+    // byte clocks out as exactly one byte (16-bit mode would append a 0x00).
+    spi_dsp_len(8);
+    st7735_snd_cmd(ST7735_CASET);// column window
+    st7735_snd_dt(0x00); st7735_snd_dt(x0);// start col
+    st7735_snd_dt(0x00); st7735_snd_dt(x1);// end   col
+    st7735_snd_cmd(ST7735_RASET);// row window
+    st7735_snd_dt(0x00); st7735_snd_dt(y0);// start row
+    st7735_snd_dt(0x00); st7735_snd_dt(y1);// end   row
+    st7735_snd_cmd(ST7735_RAMWR);// the pixels that follow land in this window
+    // Pixels stream as 16-bit RGB565 frames, so go back to 16-bit len
+    spi_dsp_len(16);
+}
+void st7735_fll_scrn(uint16_t color){
+    // One uDMA basic transfer moves at most 1024 items, so keep a 1024-pixel
+    // colour chunk and re-send it until the whole panel is painted (that is the
+    // most pixels a single DMA burst can push).
+    static uint16_t chunk[1024];
+    uint32_t i;
+    for(i = 0; i < 1024; i++) chunk[i] = color;
+    // Whole panel is the target window
+    st7735_st_wndw(0, 0, ST7735_WIDTH - 1, ST7735_HEIGHT - 1);
+    // Push in <=1024-pixel DMA bursts; CS toggles per burst but no command is
+    // issued in between, so the ST7735 keeps writing GRAM as one continuous run.
+    uint32_t pixels = (uint32_t)ST7735_WIDTH * ST7735_HEIGHT;
+    while(pixels){
+        uint32_t n = (pixels > 1024) ? 1024 : pixels;
+        dma_dsp_snd_buffer(chunk, n);
+        pixels -= n;
+    }
+}
+void st7735_drw_chr(uint8_t x, uint8_t y, char c, uint16_t color, uint16_t bg){
+    // Only printable ASCII 32..126 lives in the font table; map the rest to '?'
+    if(c < 32 || c > 126) c = '?';
+    const uint8_t *glyph = &font5x7[(c - 32) * 5];
+    // Build the whole 6x8 cell (5 glyph columns + 1 spacing, 8 rows) row-major
+    // so it matches the RAMWR scan order (X advances first, then Y), then push
+    // all 48 pixels in a single DMA burst.
+    uint16_t cell[6 * 8];
+    uint8_t row, col;
+    for(row = 0; row < 8; row++){
+        for(col = 0; col < 6; col++){
+            uint8_t on = (col < 5) ? ((glyph[col] >> row) & 0x01) : 0;// 6th col = gap
+            cell[row * 6 + col] = on ? color : bg;
+        }
+    }
+    st7735_st_wndw(x, y, x + 5, y + 7);
+    dma_dsp_snd_buffer(cell, 6 * 8);
+}
+void st7735_prtn_str(uint8_t x, uint8_t y, const char* str, uint16_t color, uint16_t bg){
+    while(*str){
+        // Wrap to the next text line when the glyph would run off the right edge
+        if(x + 6 > ST7735_WIDTH){ x = 0; y += 8; }
+        // Stop once we run past the bottom of the panel
+        if(y + 8 > ST7735_HEIGHT) break;
+        st7735_drw_chr(x, y, *str++, color, bg);
+        x += 6;// 5 glyph columns + 1 spacing column
+    }
+}
+void st7735_prtn_int(uint8_t x, uint8_t y, int32_t value, uint16_t color, uint16_t bg){
+    char buf[12];// fits -2147483648 plus the null terminator
+    char tmp[12];
+    uint8_t i = 0, t = 0;
+    bool neg = (value < 0);
+    // Magnitude taken the INT_MIN-safe way (negating INT_MIN would overflow)
+    uint32_t mag = neg ? ((uint32_t)(-(value + 1)) + 1u) : (uint32_t)value;
+    // Extract digits low-to-high, then reverse them into the print buffer
+    do{ tmp[t++] = (char)('0' + (mag % 10)); mag /= 10; }while(mag);
+    if(neg) buf[i++] = '-';
+    while(t) buf[i++] = tmp[--t];
+    buf[i] = '\0';
+    st7735_prtn_str(x, y, buf, color, bg);
+}
+void st7735_prtn_float(uint8_t x, uint8_t y, float value, uint8_t decimals, uint16_t color, uint16_t bg){
+    char buf[20];
+    char tmp[12];
+    uint8_t i = 0, t = 0;
+    if(value < 0.0f){ buf[i++] = '-'; value = -value; }
+    // Integer part first (reverse-fill then flip), then the requested decimals
+    uint32_t ip = (uint32_t)value;
+    float frac = value - (float)ip;
+    do{ tmp[t++] = (char)('0' + (ip % 10)); ip /= 10; }while(ip);
+    while(t) buf[i++] = tmp[--t];
+    if(decimals){
+        buf[i++] = '.';
+        // Truncating conversion (no rounding), one digit at a time
+        while(decimals--){
+            frac *= 10.0f;
+            uint8_t d = (uint8_t)frac;
+            buf[i++] = (char)('0' + d);
+            frac -= (float)d;
+        }
+    }
+    buf[i] = '\0';
+    st7735_prtn_str(x, y, buf, color, bg);
 }
