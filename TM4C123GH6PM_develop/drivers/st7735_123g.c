@@ -220,6 +220,7 @@ void st7735_dma_snd_buffer(uint16_t* buffer, uint32_t bufferLen){
 void st7735_init(uint32_t ui32SysClock){
     // Init needed functions and hardware reset
     g_ui32SysClk = ui32SysClock;
+    st7735_gpio_cnfg();
     delay_init(g_ui32SysClk);
     st7735_spi_cnfg();
     st7735_rst();
