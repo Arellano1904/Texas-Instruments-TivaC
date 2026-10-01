@@ -44,7 +44,7 @@ int main(void){
     config_buttons();
     config_rgb_led();
     // Display
-    st7735_gpio_cnfg();
+    st7735_init(SysClkFrq);
 
 
     // Loop Forever
@@ -54,16 +54,9 @@ int main(void){
         uint8_t buttons = pressed_button();
         if(buttons & SW1){      // SW1 pressed.
             MAP_GPIOPinWrite(GPIO_PORTF_BASE,LEDR,LEDR);
-            st7735_init(SysClkFrq);
         }
         if(buttons & SW2){      // SW2 pressed.
             MAP_GPIOPinWrite(GPIO_PORTF_BASE,LEDR,0x00);
-            // Black canvas, then some sample strings and numbers on top of it
-            st7735_fll_scrn(BLACK);
-            st7735_prtn_str(0, 0,  "TM4C123 ST7735", RED, BLACK);
-            st7735_prtn_str(0, 8, "DMA pixel push", BLUE, BLACK);
-            st7735_prtn_int(0, 16, -12345, GREEN, BLACK);
-            st7735_prtn_float(0,24, 3.14159f, 3, PURPLE, BLACK);
         }
     }
 }
